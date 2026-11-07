@@ -155,6 +155,51 @@ Goal: show which files a selected commit changed, without leaving the graph.
 - Commit hashes are not guessed: entries are written before the commit exists,
   and hashes are added later only when useful.
 
+## Graph readability — 2026-11-07
+
+Goal: make merged branches and branch colors readable at a glance.
+
+### Merge visibility
+
+- The graph engine now marks each edge with its parent index and whether it is an
+  extra (merge) parent, and marks merge rows explicitly.
+- Merge commits are drawn with an outer ring so they stand out from regular
+  commits.
+- Merge edges are dashed, thicker at the join, and end with an arrow pointing at
+  the merged parent, so the line visibly enters the branch it was merged from.
+  Their color follows the merged branch rather than the merge commit's lane.
+- Merge rows also carry a small `merge` badge next to the hash.
+- Branch tips now render colored pills directly in the commit row, using the
+  same colors as the branch list at the top.
+
+### Branch colors on the graph
+
+- Branch colors are no longer a direct lane-index lookup. The layout now records
+  whether a commit opened its lane, and the GUI propagates each branch tip color
+  down its first-parent line until another branch tip takes over.
+- The result is visible on the graph itself: a feature branch segment and the
+  older `main` segment get different node and line colors even when they share a
+  single lane. Previously every dot on a linear chain used lane 0's blue.
+- Merge links, the merged branch line, the commit nodes, and the branch pills all
+  share the same color, so a merge can be followed from its badge to its parent.
+- Lane-index colors remain the fallback for branches whose tip is outside the
+  loaded page.
+- A deterministic branch color map seeds each branch from a hash of its name and
+  resolves collisions by taking the next free palette slot, so visible branches
+  get distinct colors that stay stable across refreshes and pagination.
+- The shared palette grew from 6 to 10 colors, and graph lanes use the same
+  palette, keeping lines and labels visually consistent.
+- New `src/gui/colors.ts` (palette, branch color assignment, and graph color
+  propagation) and `src/gui/branch-pill.tsx` (shared branch badge for the header,
+  commit rows, and containing-branch list).
+
+### Tests
+
+- Graph layout tests now cover the parent index, lane starts, and merge markers.
+- New tests cover lane color cycling, branch color stability/distinctness, and
+  the graph color transitions at branch tips and merge links.
+- The suite has 19 tests and `npm run check` passes.
+
 ## Current status against the original brief
 
 | Original feature | Status |

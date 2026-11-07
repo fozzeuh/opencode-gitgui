@@ -21,6 +21,8 @@ export default Plugin.define({
       "panel.branches": "branches",
       "panel.commitBy": "By",
       "panel.parents": "Parents:",
+      "panel.merge": "merge",
+      "panel.mergeCommit": "Merge commit",
       "panel.filesChanged": "Files changed",
       "panel.files": "files",
       "panel.loadingFiles": "Loading changed files…",

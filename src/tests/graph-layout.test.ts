@@ -16,7 +16,11 @@ describe("commit graph layout", () => {
     const graph = layoutGraph([commit("c", ["b"]), commit("b", ["a"]), commit("a")])
 
     expect(graph.map((row) => row.lane)).toEqual([0, 0, 0])
-    expect(graph[0]?.edges).toEqual([{ parent: "b", fromLane: 0, toLane: 0 }])
+    expect(graph.map((row) => row.laneStart)).toEqual([true, false, false])
+    expect(graph.map((row) => row.merge)).toEqual([false, false, false])
+    expect(graph[0]?.edges).toEqual([
+      { parent: "b", parentIndex: 0, merge: false, fromLane: 0, toLane: 0 },
+    ])
   })
 
   it("splits merge parents into distinct lanes", () => {
@@ -28,11 +32,15 @@ describe("commit graph layout", () => {
     ])
 
     expect(graph.map((row) => row.lane)).toEqual([0, 0, 1, 0])
+    expect(graph.map((row) => row.laneStart)).toEqual([true, false, false, false])
+    expect(graph.map((row) => row.merge)).toEqual([true, false, false, false])
     expect(graph[0]?.edges).toEqual([
-      { parent: "left", fromLane: 0, toLane: 0 },
-      { parent: "right", fromLane: 0, toLane: 1 },
+      { parent: "left", parentIndex: 0, merge: false, fromLane: 0, toLane: 0 },
+      { parent: "right", parentIndex: 1, merge: true, fromLane: 0, toLane: 1 },
     ])
-    expect(graph[2]?.edges).toEqual([{ parent: "base", fromLane: 1, toLane: 0 }])
+    expect(graph[2]?.edges).toEqual([
+      { parent: "base", parentIndex: 0, merge: false, fromLane: 1, toLane: 0 },
+    ])
   })
 
   it("omits edges to commits outside the loaded page", () => {

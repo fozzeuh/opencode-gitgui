@@ -14,9 +14,15 @@ inspection:
 - Multi-branch history, loaded in pages of 50 commits with a **Load more** button.
 - Local and remote branch labels, combined when they have the same name and
   point to the same commit; the checked-out branch is indicated.
-- Branches containing the selected commit, with colors linked to visible graph
-  lanes.
-- SVG commit graph with lanes and merge edges.
+- Branches containing the selected commit, with colors linked to a stable
+  per-branch palette rather than graph lanes.
+- SVG commit graph whose nodes and line segments follow the branch color, so a
+  feature branch stays visually distinct from `main` even on a linear history.
+- Classic side-branch layout: a merged branch leaves the main line, runs beside
+  it, and visibly rejoins at the fork point.
+- Merge commits use an outer ring, dashed merge links, and an arrow into the
+  merged branch.
+- Branch tips are shown as colored pills directly on the commit rows.
 - Select a commit to view its author, date, hash, parents, and the files it
   changed.
 - Changed files show their status (added, modified, deleted, renamed, copied,
@@ -190,12 +196,15 @@ src/
 │   └── layout.ts     # graph lane and edge layout
 ├── gui.tsx           # GUI entry: Panel, MenuItem, Command
 ├── gui/
+│   ├── branch-pill.tsx # shared branch reference badge
+│   ├── colors.ts     # lane palette and stable branch colors
 │   └── panel.tsx     # SolidJS panel, pagination, and SVG graph
 ├── shared/
 │   ├── branches.ts   # combine matching local and remote refs
 │   └── ids.ts        # plugin and panel ids
 └── tests/
     ├── branches.test.ts
+    ├── colors.test.ts
     ├── git-reader.test.ts
     ├── graph-layout.test.ts
     └── ids.test.ts

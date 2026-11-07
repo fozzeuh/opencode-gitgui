@@ -2,6 +2,10 @@ import type { GitCommit } from "../git/reader"
 
 export interface GraphEdge {
   readonly parent: string
+  /** Index of the parent in the commit's parent list: 0 is the mainline. */
+  readonly parentIndex: number
+  /** True for the extra parents of a merge commit. */
+  readonly merge: boolean
   readonly fromLane: number
   readonly toLane: number
 }
@@ -9,6 +13,9 @@ export interface GraphEdge {
 export interface GraphRow {
   readonly hash: string
   readonly lane: number
+  /** True when this commit opened its lane instead of inheriting a pending one. */
+  readonly laneStart: boolean
+  readonly merge: boolean
   readonly edges: readonly GraphEdge[]
 }
 
@@ -27,7 +34,9 @@ export function layoutGraph(commits: readonly GitCommit[]): GraphRow[] {
   }
 
   for (const commit of commits) {
-    const lane = pending.get(commit.hash) ?? firstFreeLane()
+    const pendingLane = pending.get(commit.hash)
+    const laneStart = pendingLane === undefined
+    const lane = pendingLane ?? firstFreeLane()
     pending.delete(commit.hash)
     const edges: GraphEdge[] = []
 
@@ -38,9 +47,15 @@ export function layoutGraph(commits: readonly GitCommit[]): GraphRow[] {
         parentLane = index === 0 ? lane : firstFreeLane(lane)
         pending.set(parent, parentLane)
       }
-      edges.push({ parent, fromLane: lane, toLane: parentLane })
+      edges.push({
+        parent,
+        parentIndex: index,
+        merge: index > 0,
+        fromLane: lane,
+        toLane: parentLane,
+      })
     }
-    rows.push({ hash: commit.hash, lane, edges })
+    rows.push({ hash: commit.hash, lane, laneStart, merge: commit.parents.length > 1, edges })
   }
 
   return rows
