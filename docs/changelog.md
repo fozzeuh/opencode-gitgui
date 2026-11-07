@@ -171,6 +171,15 @@ Goal: make merged branches and branch colors readable at a glance.
 - Merge rows also carry a small `merge` badge next to the hash.
 - Branch tips now render colored pills directly in the commit row, using the
   same colors as the branch list at the top.
+- Lane layout was rewritten to draw the classic side-branch shape. Pending
+  parents are tracked per lane, the first parent continues the current lane,
+  merge parents open a lane on the right, and a lane that reaches a parent
+  already tracked by another lane joins the leftmost lane. This matters with
+  `git log --topo-order`, which emits feature commits before the main-line
+  commit at their fork point: the old algorithm then dragged the main line onto
+  the side lane instead of showing the feature lane rejoining it.
+- Edges are connected after every lane is assigned, so a join always targets the
+  final parent lane and a merged branch visibly returns to the main line.
 
 ### Branch colors on the graph
 
@@ -195,10 +204,11 @@ Goal: make merged branches and branch colors readable at a glance.
 
 ### Tests
 
-- Graph layout tests now cover the parent index, lane starts, and merge markers.
+- Graph layout tests now cover the parent index, lane starts, merge markers, and
+  the side-branch join produced by `git log --topo-order`.
 - New tests cover lane color cycling, branch color stability/distinctness, and
   the graph color transitions at branch tips and merge links.
-- The suite has 19 tests and `npm run check` passes.
+- The suite has 20 tests and `npm run check` passes.
 
 ## Current status against the original brief
 
