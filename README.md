@@ -21,6 +21,13 @@ adds repository reading and an interactive SVG graph:
 
 This phase is read-only; it exposes no destructive Git commands.
 
+## Documentation
+
+- [Initial request](./docs/initial-request.md) — the original brief, kept
+  verbatim in French.
+- [Changelog](./docs/changelog.md) — phase-by-phase record of the work and the
+  remaining scope.
+
 ## OpenCode V2 APIs used
 
 | Purpose | API |
@@ -156,6 +163,9 @@ npm run check
 ## Project structure
 
 ```text
+docs/
+├── initial-request.md # original brief, verbatim
+└── changelog.md       # phase history and remaining scope
 src/
 ├── index.ts          # server plugin: RPC registration
 ├── rpc.ts            # typed RPC contract (ping, history, branches)
