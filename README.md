@@ -29,9 +29,12 @@ inspection:
   type change), rename source, additions and deletions, and a binary marker.
 - Click a changed file to open its unified diff against the first parent, with
   colored additions, deletions, and hunk headers.
-- Manually refresh repository data.
+- **Refresh** repository data manually, or click **Fetch all** to fetch from all
+  configured remotes and then refresh the graph and branch list.
 
-This phase is read-only; it exposes no destructive Git commands.
+Git inspection is read-only. The explicit **Fetch all** action contacts configured
+remotes and updates remote-tracking refs, but does not prune refs or change the
+checked-out branch or working tree. No destructive Git commands are exposed.
 
 ## Documentation
 
@@ -58,6 +61,7 @@ This phase is read-only; it exposes no destructive Git commands.
 | Portable RPC schemas | `Schema.toStandardSchemaV1` from `effect` |
 | GUI bundle | `gui()` preset from `@opencode/plugin/gui/vite` |
 | History / branches | Git CLI via `node:child_process.spawn`, with the shell disabled |
+| Fetch all remotes | `git fetch --all` through typed `fetchAll` RPC, only on button click |
 | Commit files | `git diff-tree` name-status and numstat against the first parent, with rename detection |
 | File diff | `git diff` against the first parent, or `git show` for root commits, rendered as a colored unified patch |
 | Graph | Pure lane-layout algorithm in `src/graph/layout.ts`, rendered as SVG |
@@ -163,12 +167,14 @@ npm run check
 - The tab remains `pinned` to ensure visibility during this phase. It is planned
   to become a closable tab opened from a launcher in a later GUI phase.
 
-## Git read security and limits
+## Git command security and limits
 
-- Read-only commands use `spawn("git", args)` with `shell: false`; paths are
-  never interpolated into shell commands.
-- The repository path must be absolute. Each command has a 10-second timeout
-  and stdout is limited to 4 MiB.
+- Git commands use `spawn("git", args)` with `shell: false`; paths are never
+  interpolated into shell commands. Fetch arguments are fixed by the server and
+  cannot be supplied by the GUI.
+- The repository path must be absolute. Read commands have a 10-second timeout;
+  user-requested fetch has a 120-second timeout. Captured stdout is limited to
+  4 MiB.
 - Each history request is capped at 100 commits and offset 10,000.
 - Each commit file request returns at most 500 files; the RPC response includes
   a `truncated` flag when the commit has more.
@@ -177,9 +183,10 @@ npm run check
 - Merge commits are compared against their first parent, so the list shows what
   the merge brought in relative to the previous commit on the branch.
 - Commits are read from all visible refs (`git log --all`), so remote branches
-  must already have been fetched locally.
-- Actions such as checkout, reset, cherry-pick, and deletion are out of scope
-  for this phase.
+  must already have been fetched locally. Use **Fetch all** to update configured
+  remotes.
+- Fetch does not prune stale refs. Checkout, reset, cherry-pick, push, pull, and
+  deletion remain out of scope.
 
 ## Project structure
 
@@ -191,7 +198,7 @@ src/
 ├── index.ts          # server plugin: RPC registration
 ├── rpc.ts            # typed RPC contract (ping, history, branches)
 ├── git/
-│   └── reader.ts     # read-only Git commands and parsing
+│   └── reader.ts     # Git commands, history reading, and parsing
 ├── graph/
 │   └── layout.ts     # graph lane and edge layout
 ├── gui.tsx           # GUI entry: Panel, MenuItem, Command

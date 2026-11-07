@@ -82,6 +82,10 @@ export const GitGraphRpc = Rpc.define({
         }),
       ),
     },
+    fetchAll: {
+      input: Schema.toStandardSchemaV1(RepositoryInput),
+      output: Schema.toStandardSchemaV1(Schema.Struct({ ok: Schema.Boolean })),
+    },
     branchesContaining: {
       input: Schema.toStandardSchemaV1(
         Schema.Struct({ directory: Schema.String, hash: Schema.String }),

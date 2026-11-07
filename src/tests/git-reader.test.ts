@@ -1,10 +1,11 @@
 import { execFileSync } from "node:child_process"
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 import {
   mergeCommitFiles,
+  fetchAll,
   parseCommitFileStats,
   parseCommitFileStatus,
   parseGitBranches,
@@ -109,6 +110,62 @@ describe("Commit file parsing", () => {
 })
 
 describe("Git reader integration", () => {
+  it("fetches updates from every configured remote when requested", async () => {
+    const root = mkdtempSync(join(tmpdir(), "git-graph-fetch-"))
+    const remote = join(root, "origin.git")
+    const source = join(root, "source")
+    const checkout = join(root, "checkout")
+    mkdirSync(source)
+
+    const git = (cwd: string, args: string[]) =>
+      execFileSync("git", args, {
+        cwd,
+        stdio: "ignore",
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: "Git Graph Test",
+          GIT_AUTHOR_EMAIL: "git-graph@example.invalid",
+          GIT_COMMITTER_NAME: "Git Graph Test",
+          GIT_COMMITTER_EMAIL: "git-graph@example.invalid",
+        },
+      })
+
+    try {
+      git(root, ["init", "--bare", "-b", "main", remote])
+      git(source, ["init", "-b", "main"])
+      writeFileSync(join(source, "sample.txt"), "first\n")
+      git(source, ["add", "sample.txt"])
+      git(source, ["commit", "-m", "Initial commit"])
+      git(source, ["remote", "add", "origin", remote])
+      git(source, ["push", "-u", "origin", "main"])
+      execFileSync("git", ["clone", remote, checkout], { cwd: root, stdio: "ignore" })
+
+      writeFileSync(join(source, "sample.txt"), "second\n")
+      git(source, ["commit", "-am", "Remote update"])
+      git(source, ["push", "origin", "main"])
+
+      const before = execFileSync("git", ["rev-parse", "refs/remotes/origin/main"], {
+        cwd: checkout,
+        encoding: "utf8",
+      }).trim()
+      await fetchAll(checkout)
+      const after = execFileSync("git", ["rev-parse", "refs/remotes/origin/main"], {
+        cwd: checkout,
+        encoding: "utf8",
+      }).trim()
+
+      expect(after).not.toBe(before)
+      expect(after).toBe(
+        execFileSync("git", ["rev-parse", "main"], {
+          cwd: source,
+          encoding: "utf8",
+        }).trim(),
+      )
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it("reads paginated history and local/remote branches from a real repository", async () => {
     const directory = mkdtempSync(join(tmpdir(), "git-graph-reader-"))
     const git = (args: string[]) =>

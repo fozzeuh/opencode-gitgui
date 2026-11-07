@@ -210,6 +210,36 @@ Goal: make merged branches and branch colors readable at a glance.
   the graph color transitions at branch tips and merge links.
 - The suite has 20 tests and `npm run check` passes.
 
+## Fetch all — 2026-11-07
+
+Goal: let users update remote-tracking refs from the graph without leaving the
+panel.
+
+### Git backend and RPC
+
+- Added a typed `fetchAll` RPC endpoint. The server validates the absolute
+  repository path and runs the fixed argument list `git fetch --all` with the
+  shell disabled; no command or remote is accepted from the GUI.
+- Fetch is only run after an explicit button click. It updates refs from all
+  configured remotes, does not prune stale refs, and does not change the checked
+  out branch or working tree.
+- Fetch has a 120-second timeout; existing read commands keep their 10-second
+  timeout.
+
+### GUI
+
+- Added a **Fetch all** button beside **Refresh**.
+- The button shows a busy state and the panel reports progress, success, or the
+  Git error. On success, the graph and branch list refresh automatically so new
+  remote refs and commits become visible.
+
+### Tests and documentation
+
+- Added an integration test using a local bare remote to verify that fetch
+  updates the remote-tracking branch without network access.
+- README now documents the explicit network action, its behavior, and its limit.
+- `npm run check` passes.
+
 ## Current status against the original brief
 
 | Original feature | Status |
@@ -224,7 +254,7 @@ Goal: make merged branches and branch colors readable at a glance.
 | File diffs with syntax highlighting | Partial: unified diff viewer with line colors; syntax highlighting not yet |
 | Search by message or hash | Not yet |
 | Filter by branch | Not yet |
-| Git actions (checkout, cherry-pick, revert, reset, push, fetch, pull) | Not yet; intentionally read-only |
+| Git actions (checkout, cherry-pick, revert, reset, push, fetch, pull) | Partial: explicit Fetch all updates configured remotes; other actions not yet |
 | Confirmation flows for destructive actions | Not yet |
 | Closable tab and launcher | Not yet; tab is pinned |
 

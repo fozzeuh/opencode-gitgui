@@ -49,6 +49,9 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
   const [offset, setOffset] = createSignal(0)
   const [hasMore, setHasMore] = createSignal(false)
   const [loading, setLoading] = createSignal(true)
+  const [fetching, setFetching] = createSignal(false)
+  const [fetchMessage, setFetchMessage] = createSignal("")
+  const [fetchError, setFetchError] = createSignal("")
   const [loadingMore, setLoadingMore] = createSignal(false)
   const [loadingContainingBranches, setLoadingContainingBranches] = createSignal(false)
   const [containingBranchesError, setContainingBranchesError] = createSignal("")
@@ -148,6 +151,23 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
       if (request === generation) setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       if (request === generation) setLoading(false)
+    }
+  }
+
+  async function fetchAll() {
+    if (fetching()) return
+    const directory = props.session.directory
+    setFetching(true)
+    setFetchMessage("")
+    setFetchError("")
+    try {
+      await ctx.client.rpc(GitGraphRpc).fetchAll({ directory })
+      setFetchMessage(ctx.t("panel.fetchComplete"))
+      await refresh(directory)
+    } catch (cause) {
+      setFetchError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setFetching(false)
     }
   }
 
@@ -351,7 +371,26 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
         <ctx.ui.Button icon="refresh" size="small" busy={loading()} onClick={() => void refresh(props.session.directory)}>
           {ctx.t("panel.refresh")}
         </ctx.ui.Button>
+        <ctx.ui.Button size="small" busy={fetching()} onClick={() => void fetchAll()}>
+          {ctx.t("panel.fetchAll")}
+        </ctx.ui.Button>
       </header>
+
+      <Show when={fetchError()}>
+        <div role="alert" style={{ "font-size": "11px", "line-height": 1.5, color: "#da1e28" }}>
+          {ctx.t("panel.fetchError")}: {fetchError()}
+        </div>
+      </Show>
+      <Show when={fetching()}>
+        <div role="status" style={{ "font-size": "11px", "line-height": 1.5, opacity: 0.7 }}>
+          {ctx.t("panel.fetching")}
+        </div>
+      </Show>
+      <Show when={fetchMessage() && !fetching()}>
+        <div role="status" style={{ "font-size": "11px", "line-height": 1.5, color: "#42be65" }}>
+          {fetchMessage()}
+        </div>
+      </Show>
 
       <section style={{ display: "flex", "flex-direction": "column", gap: "5px" }}>
         <span style={{ "font-size": "11px", opacity: 0.65 }}>{ctx.t("panel.repository")}</span>

@@ -6,6 +6,7 @@ const MAX_FILES = 500
 const MAX_PATCH = 256 * 1024
 const MAX_OUTPUT = 4 * 1024 * 1024
 const COMMAND_TIMEOUT_MS = 10_000
+const FETCH_TIMEOUT_MS = 120_000
 
 export type GitFileStatus =
   | "added"
@@ -54,7 +55,12 @@ function repositoryDirectory(directory: string): string {
   return resolve(directory)
 }
 
-function runGit(args: readonly string[], cwd: string, signal?: AbortSignal): Promise<string> {
+function runGit(
+  args: readonly string[],
+  cwd: string,
+  signal?: AbortSignal,
+  timeoutMs = COMMAND_TIMEOUT_MS,
+): Promise<string> {
   return new Promise((resolvePromise, reject) => {
     if (signal?.aborted) {
       reject(new Error("The Git request was cancelled."))
@@ -89,7 +95,7 @@ function runGit(args: readonly string[], cwd: string, signal?: AbortSignal): Pro
     const timeout = setTimeout(() => {
       child.kill("SIGTERM")
       finish(new Error("The Git command exceeded the allowed time limit."))
-    }, COMMAND_TIMEOUT_MS)
+    }, timeoutMs)
 
     signal?.addEventListener("abort", abort, { once: true })
     child.stdout.on("data", (chunk: Buffer) => {
@@ -324,6 +330,12 @@ export async function readBranches(
   )
   const branches = parseGitBranches(output)
   return { current: currentOutput.trim() || null, branches }
+}
+
+/** Fetch updates for every configured remote; this is only invoked on user request. */
+export async function fetchAll(directory: string, signal?: AbortSignal): Promise<void> {
+  const cwd = repositoryDirectory(directory)
+  await runGit(["fetch", "--all"], cwd, signal, FETCH_TIMEOUT_MS)
 }
 
 export async function readBranchesContaining(
