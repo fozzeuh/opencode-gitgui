@@ -11,6 +11,7 @@ import {
   parseGitLog,
   readBranches,
   readBranchesContaining,
+  readCommitFileDiff,
   readCommitFiles,
   readHistory,
 } from "../git/reader"
@@ -146,6 +147,10 @@ describe("Git reader integration", () => {
       const containing = await readBranchesContaining(directory, featureHash)
       const featureFiles = await readCommitFiles(directory, featureHash)
       const mainFiles = await readCommitFiles(directory, currentHash)
+      const initialHash = allHistory.commits.at(-1)!.hash
+      const featureDiff = await readCommitFileDiff(directory, featureHash, "feature.txt", null)
+      const mainDiff = await readCommitFileDiff(directory, currentHash, "sample.txt", null)
+      const initialDiff = await readCommitFileDiff(directory, initialHash, "sample.txt", null)
 
       expect(firstPage.root).toBe(realpathSync(directory))
       expect(firstPage.commits).toHaveLength(1)
@@ -182,6 +187,12 @@ describe("Git reader integration", () => {
           binary: false,
         },
       ])
+      expect(featureDiff.binary).toBe(false)
+      expect(featureDiff.truncated).toBe(false)
+      expect(featureDiff.patch).toContain("+feature-only")
+      expect(mainDiff.patch).toContain("-first")
+      expect(mainDiff.patch).toContain("+second")
+      expect(initialDiff.patch).toContain("+first")
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }
@@ -233,6 +244,48 @@ describe("Git reader integration", () => {
           binary: false,
         },
       ])
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("reads diffs for renamed and binary files", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "git-graph-diff-"))
+    const git = (args: string[]) =>
+      execFileSync("git", args, {
+        cwd: directory,
+        stdio: "ignore",
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: "Git Graph Test",
+          GIT_AUTHOR_EMAIL: "git-graph@example.invalid",
+          GIT_COMMITTER_NAME: "Git Graph Test",
+          GIT_COMMITTER_EMAIL: "git-graph@example.invalid",
+        },
+      })
+
+    try {
+      git(["init", "-b", "main"])
+      writeFileSync(join(directory, "old.txt"), "content\n")
+      git(["add", "old.txt"])
+      git(["commit", "-m", "Base commit"])
+      git(["mv", "old.txt", "new.txt"])
+      writeFileSync(join(directory, "image.bin"), "bin\0data")
+      git(["add", "image.bin"])
+      git(["commit", "-m", "Rename and binary"])
+      const hash = execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: directory,
+        encoding: "utf8",
+      }).trim()
+
+      const renameDiff = await readCommitFileDiff(directory, hash, "new.txt", "old.txt")
+      const binaryDiff = await readCommitFileDiff(directory, hash, "image.bin", null)
+
+      expect(renameDiff.binary).toBe(false)
+      expect(renameDiff.patch).toContain("rename from old.txt")
+      expect(renameDiff.patch).toContain("rename to new.txt")
+      expect(binaryDiff.binary).toBe(true)
+      expect(binaryDiff.patch).toContain("Binary files")
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }

@@ -3,6 +3,7 @@ import { isAbsolute, resolve } from "node:path"
 
 const MAX_HISTORY = 100
 const MAX_FILES = 500
+const MAX_PATCH = 256 * 1024
 const MAX_OUTPUT = 4 * 1024 * 1024
 const COMMAND_TIMEOUT_MS = 10_000
 
@@ -22,6 +23,12 @@ export interface GitFileChange {
   readonly additions: number | null
   readonly deletions: number | null
   readonly binary: boolean
+}
+
+export interface GitFileDiff {
+  readonly patch: string
+  readonly binary: boolean
+  readonly truncated: boolean
 }
 
 export interface GitCommit {
@@ -337,6 +344,22 @@ export async function readBranchesContaining(
   return { branches: parseGitBranches(output) }
 }
 
+async function firstParentOf(
+  cwd: string,
+  hash: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  const line = (await runGit(["rev-list", "--parents", "-n", "1", hash], cwd, signal)).trim()
+  return line.split(" ")[1] ?? null
+}
+
+function commitPath(path: string): string {
+  if (!path || path.length > 4096 || path.includes("\0")) {
+    throw new Error("The file path is invalid.")
+  }
+  return path
+}
+
 export async function readCommitFiles(
   directory: string,
   hash: string,
@@ -346,8 +369,7 @@ export async function readCommitFiles(
     throw new Error("The commit hash is invalid.")
   }
   const cwd = repositoryDirectory(directory)
-  const parentLine = (await runGit(["rev-list", "--parents", "-n", "1", hash], cwd, signal)).trim()
-  const firstParent = parentLine.split(" ")[1]
+  const firstParent = await firstParentOf(cwd, hash, signal)
   const revisionArgs = ["diff-tree", "--no-commit-id", "-r", "-M"]
   const revision = firstParent ? [firstParent, hash] : ["--root", hash]
   const [statusOutput, statsOutput] = await Promise.all([
@@ -359,4 +381,32 @@ export async function readCommitFiles(
     parseCommitFileStats(statsOutput),
   )
   return { files: files.slice(0, MAX_FILES), truncated: files.length > MAX_FILES }
+}
+
+export async function readCommitFileDiff(
+  directory: string,
+  hash: string,
+  path: string,
+  previousPath: string | null,
+  signal?: AbortSignal,
+): Promise<GitFileDiff> {
+  if (!/^[0-9a-f]{40,64}$/i.test(hash)) {
+    throw new Error("The commit hash is invalid.")
+  }
+  const filePath = commitPath(path)
+  const oldPath = previousPath === null ? null : commitPath(previousPath)
+  const cwd = repositoryDirectory(directory)
+  const firstParent = await firstParentOf(cwd, hash, signal)
+  const paths = oldPath && oldPath !== filePath ? [oldPath, filePath] : [filePath]
+  const args = firstParent
+    ? ["diff", "--no-color", "--unified=3", firstParent, hash, "--", ...paths]
+    : ["show", "--format=", "--no-color", "--unified=3", hash, "--", ...paths]
+  const output = await runGit(args, cwd, signal)
+  const binary = /^Binary files .* differ$/m.test(output) || output.includes("GIT binary patch")
+  const truncated = output.length > MAX_PATCH
+  return {
+    patch: truncated ? output.slice(0, MAX_PATCH) : output,
+    binary,
+    truncated,
+  }
 }

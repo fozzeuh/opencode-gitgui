@@ -39,6 +39,12 @@ const FileChange = Schema.Struct({
   binary: Schema.Boolean,
 })
 
+const FileDiff = Schema.Struct({
+  patch: Schema.String,
+  binary: Schema.Boolean,
+  truncated: Schema.Boolean,
+})
+
 export const GitGraphRpc = Rpc.define({
   id: "git-graph",
   methods: {
@@ -94,6 +100,17 @@ export const GitGraphRpc = Rpc.define({
           truncated: Schema.Boolean,
         }),
       ),
+    },
+    commitFileDiff: {
+      input: Schema.toStandardSchemaV1(
+        Schema.Struct({
+          directory: Schema.String,
+          hash: Schema.String,
+          path: Schema.String,
+          previousPath: Schema.NullOr(Schema.String),
+        }),
+      ),
+      output: Schema.toStandardSchemaV1(FileDiff),
     },
   },
   events: {},

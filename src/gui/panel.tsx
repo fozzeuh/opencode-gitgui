@@ -47,11 +47,18 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
   const [filesTruncated, setFilesTruncated] = createSignal(false)
   const [loadingFiles, setLoadingFiles] = createSignal(false)
   const [filesError, setFilesError] = createSignal("")
+  const [selectedFile, setSelectedFile] = createSignal<string | null>(null)
+  const [diff, setDiff] = createSignal("")
+  const [diffBinary, setDiffBinary] = createSignal(false)
+  const [diffTruncated, setDiffTruncated] = createSignal(false)
+  const [loadingDiff, setLoadingDiff] = createSignal(false)
+  const [diffError, setDiffError] = createSignal("")
   const [detailHeight, setDetailHeight] = createSignal(0)
   const [error, setError] = createSignal("")
   let generation = 0
   let branchRequest = 0
   let filesRequest = 0
+  let diffRequest = 0
   let detailObserver: ResizeObserver | undefined
 
   const graph = createMemo(() => layoutGraph(commits()))
@@ -78,6 +85,10 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
     }
     return { additions, deletions }
   })
+  const selectedFileChange = createMemo(
+    () => files().find((file) => file.path === selectedFile()) ?? null,
+  )
+  const diffLines = createMemo(() => diff().replace(/\n$/, "").split("\n"))
 
   function observeDetail(element: HTMLElement) {
     detailObserver?.disconnect()
@@ -177,6 +188,7 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
     setFiles([])
     setFilesTruncated(false)
     setFilesError("")
+    setSelectedFile(null)
     setLoadingFiles(!!commit)
     if (!commit) return
 
@@ -197,11 +209,96 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
       })
   })
 
+  createEffect(() => {
+    const commit = selectedCommit()
+    const file = selectedFileChange()
+    const directory = props.session.directory
+    const request = ++diffRequest
+
+    setDiff("")
+    setDiffBinary(false)
+    setDiffTruncated(false)
+    setDiffError("")
+    if (!commit || !file) {
+      setLoadingDiff(false)
+      return
+    }
+    if (file.binary) {
+      setDiffBinary(true)
+      setLoadingDiff(false)
+      return
+    }
+
+    setLoadingDiff(true)
+    void ctx.client.rpc(GitGraphRpc)
+      .commitFileDiff({
+        directory,
+        hash: commit.hash,
+        path: file.path,
+        previousPath: file.previousPath,
+      })
+      .then((result) => {
+        if (request !== diffRequest) return
+        setDiff(result.patch)
+        setDiffBinary(result.binary)
+        setDiffTruncated(result.truncated)
+      })
+      .catch((cause: unknown) => {
+        if (request === diffRequest) {
+          setDiffError(cause instanceof Error ? cause.message : String(cause))
+        }
+      })
+      .finally(() => {
+        if (request === diffRequest) setLoadingDiff(false)
+      })
+  })
+
   const shortHash = (hash: string) => hash.slice(0, 7)
   const commitDate = (timestamp: number) => new Date(timestamp * 1000).toLocaleString()
 
   function activateCommit(commit: GitCommit) {
     setSelected((current) => (current === commit.hash ? null : commit.hash))
+  }
+
+  function activateFile(file: GitFileChange) {
+    setSelectedFile((current) => (current === file.path ? null : file.path))
+  }
+
+  function onFileKeyDown(event: KeyboardEvent, file: GitFileChange) {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault()
+      activateFile(file)
+    }
+  }
+
+  function diffLineStyle(line: string) {
+    if (
+      line.startsWith("diff --git") ||
+      line.startsWith("index ") ||
+      line.startsWith("new file mode") ||
+      line.startsWith("deleted file mode") ||
+      line.startsWith("old mode") ||
+      line.startsWith("new mode") ||
+      line.startsWith("similarity index") ||
+      line.startsWith("rename from") ||
+      line.startsWith("rename to") ||
+      line.startsWith("copy from") ||
+      line.startsWith("copy to") ||
+      line.startsWith("--- ") ||
+      line.startsWith("+++ ")
+    ) {
+      return { opacity: 0.6 }
+    }
+    if (line.startsWith("@@")) {
+      return { color: "#78a9ff", "background-color": "rgba(120, 169, 255, 0.10)" }
+    }
+    if (line.startsWith("+")) {
+      return { color: "#42be65", "background-color": "rgba(66, 190, 101, 0.10)" }
+    }
+    if (line.startsWith("-")) {
+      return { color: "#da1e28", "background-color": "rgba(218, 30, 40, 0.10)" }
+    }
+    return {}
   }
 
   function onCommitKeyDown(event: KeyboardEvent, commit: GitCommit) {
@@ -431,18 +528,34 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
                                     <For each={files()}>
                                       {(file) => (
                                         <div
-                                          title={file.previousPath ? `${file.previousPath} → ${file.path}` : file.path}
+                                          role="button"
+                                          tabindex="0"
+                                          aria-pressed={selectedFile() === file.path}
+                                          title={`${file.previousPath ? `${file.previousPath} → ${file.path}` : file.path} · ${ctx.t("panel.viewDiff")}`}
+                                          onClick={() => activateFile(file)}
+                                          onKeyDown={(event) => onFileKeyDown(event, file)}
                                           style={{
                                             display: "grid",
-                                            "grid-template-columns": "16px minmax(0, 1fr) auto",
+                                            "grid-template-columns": "10px 16px minmax(0, 1fr) auto",
                                             "align-items": "center",
                                             gap: "6px",
                                             padding: "2px 4px",
                                             "border-radius": "3px",
-                                            "background-color": "rgba(127, 127, 127, 0.08)",
+                                            cursor: "pointer",
+                                            "background-color":
+                                              selectedFile() === file.path
+                                                ? "rgba(120, 169, 255, 0.18)"
+                                                : "rgba(127, 127, 127, 0.08)",
+                                            outline:
+                                              selectedFile() === file.path
+                                                ? "1px solid rgba(120, 169, 255, 0.55)"
+                                                : "none",
                                             "font-size": "11px",
                                           }}
                                         >
+                                          <span aria-hidden="true" style={{ "font-size": "9px", opacity: 0.65 }}>
+                                            {selectedFile() === file.path ? "▾" : "▸"}
+                                          </span>
                                           <span
                                             aria-label={file.status}
                                             title={file.status}
@@ -493,6 +606,121 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
                                   </Show>
                                 </Show>
                               </Show>
+                            </Show>
+                            <Show when={selectedFileChange()}>
+                              {(file) => (
+                                <div
+                                  style={{
+                                    display: "flex",
+                                    "flex-direction": "column",
+                                    "border-radius": "4px",
+                                    border: "1px solid rgba(127, 127, 127, 0.25)",
+                                    overflow: "hidden",
+                                  }}
+                                >
+                                  <div
+                                    style={{
+                                      display: "flex",
+                                      "align-items": "center",
+                                      gap: "6px",
+                                      padding: "4px 6px",
+                                      "background-color": "rgba(127, 127, 127, 0.12)",
+                                      "font-size": "11px",
+                                    }}
+                                  >
+                                    <strong
+                                      style={{
+                                        flex: 1,
+                                        "text-overflow": "ellipsis",
+                                        "white-space": "nowrap",
+                                        overflow: "hidden",
+                                      }}
+                                    >
+                                      {file().previousPath ? `${file().previousPath} → ${file().path}` : file().path}
+                                    </strong>
+                                    <button
+                                      type="button"
+                                      onClick={() => setSelectedFile(null)}
+                                      style={{
+                                        padding: 0,
+                                        border: "none",
+                                        background: "none",
+                                        color: "inherit",
+                                        cursor: "pointer",
+                                        "font-size": "11px",
+                                        opacity: 0.7,
+                                      }}
+                                    >
+                                      {ctx.t("panel.closeDiff")}
+                                    </button>
+                                  </div>
+                                  <Show
+                                    when={!loadingDiff()}
+                                    fallback={
+                                      <span style={{ padding: "6px", "font-size": "11px", opacity: 0.65 }}>
+                                        {ctx.t("panel.loadingDiff")}
+                                      </span>
+                                    }
+                                  >
+                                    <Show
+                                      when={!diffError()}
+                                      fallback={
+                                        <span role="alert" style={{ padding: "6px", "font-size": "11px", color: "#da1e28" }}>
+                                          {diffError()}
+                                        </span>
+                                      }
+                                    >
+                                      <Show
+                                        when={!diffBinary()}
+                                        fallback={
+                                          <span style={{ padding: "6px", "font-size": "11px", opacity: 0.65 }}>
+                                            {ctx.t("panel.binaryDiff")}
+                                          </span>
+                                        }
+                                      >
+                                        <Show
+                                          when={diff().length > 0}
+                                          fallback={
+                                            <span style={{ padding: "6px", "font-size": "11px", opacity: 0.65 }}>
+                                              {ctx.t("panel.noDiff")}
+                                            </span>
+                                          }
+                                        >
+                                          <div
+                                            style={{
+                                              "max-height": "320px",
+                                              overflow: "auto",
+                                              "font-family": "ui-monospace, SFMono-Regular, Menlo, monospace",
+                                              "font-size": "10px",
+                                              "line-height": 1.45,
+                                              "tab-size": 2,
+                                            }}
+                                          >
+                                            <For each={diffLines()}>
+                                              {(line) => (
+                                                <div
+                                                  style={{
+                                                    padding: "0 6px",
+                                                    "white-space": "pre",
+                                                    ...diffLineStyle(line),
+                                                  }}
+                                                >
+                                                  {line || " "}
+                                                </div>
+                                              )}
+                                            </For>
+                                          </div>
+                                          <Show when={diffTruncated()}>
+                                            <span style={{ padding: "4px 6px", "font-size": "10px", opacity: 0.65 }}>
+                                              {ctx.t("panel.diffTruncated")}
+                                            </span>
+                                          </Show>
+                                        </Show>
+                                      </Show>
+                                    </Show>
+                                  </Show>
+                                </div>
+                              )}
                             </Show>
                           </div>
                           <strong style={{ "margin-top": "2px" }}>{ctx.t("panel.containingBranches")}</strong>

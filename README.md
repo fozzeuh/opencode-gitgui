@@ -21,6 +21,8 @@ inspection:
   changed.
 - Changed files show their status (added, modified, deleted, renamed, copied,
   type change), rename source, additions and deletions, and a binary marker.
+- Click a changed file to open its unified diff against the first parent, with
+  colored additions, deletions, and hunk headers.
 - Manually refresh repository data.
 
 This phase is read-only; it exposes no destructive Git commands.
@@ -51,6 +53,7 @@ This phase is read-only; it exposes no destructive Git commands.
 | GUI bundle | `gui()` preset from `@opencode/plugin/gui/vite` |
 | History / branches | Git CLI via `node:child_process.spawn`, with the shell disabled |
 | Commit files | `git diff-tree` name-status and numstat against the first parent, with rename detection |
+| File diff | `git diff` against the first parent, or `git show` for root commits, rendered as a colored unified patch |
 | Graph | Pure lane-layout algorithm in `src/graph/layout.ts`, rendered as SVG |
 
 ## Verified versions
@@ -163,6 +166,8 @@ npm run check
 - Each history request is capped at 100 commits and offset 10,000.
 - Each commit file request returns at most 500 files; the RPC response includes
   a `truncated` flag when the commit has more.
+- Each file diff is capped at 256 KiB; the RPC response includes a `truncated`
+  flag when the patch is larger.
 - Merge commits are compared against their first parent, so the list shows what
   the merge brought in relative to the previous commit on the branch.
 - Commits are read from all visible refs (`git log --all`), so remote branches

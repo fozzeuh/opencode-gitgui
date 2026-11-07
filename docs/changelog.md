@@ -108,6 +108,13 @@ Goal: show which files a selected commit changed, without leaving the graph.
   and unknown records.
 - Each request returns at most 500 files with a `truncated` flag, on top of the
   existing 10-second timeout and 4 MiB output cap.
+- New `commitFileDiff` RPC method and `readCommitFileDiff` reader.
+- Diffs use `git diff` against the first parent, or `git show` for root commits,
+  with three lines of context.
+- Renamed and copied files pass both paths to Git so the patch keeps its rename
+  metadata.
+- Patches are capped at 256 KiB with a `truncated` flag; binary files are
+  detected from Git's output.
 
 ### GUI
 
@@ -115,19 +122,24 @@ Goal: show which files a selected commit changed, without leaving the graph.
 - Header shows the file count and total additions/deletions.
 - Each file row shows a colored status badge, the path (with `old → new` for
   renames), and its additions/deletions or a **Binary** marker.
+- File rows are clickable and keyboard accessible; selecting one opens its
+  unified diff below the list.
+- The diff viewer colors additions, deletions, and hunk headers, scrolls
+  independently, and handles binary, empty, truncated, and error states.
 - Long file lists scroll inside the detail card so the graph layout stays
   stable; truncation is called out explicitly.
 - Files and containing branches are fetched independently, so one failure does
   not hide the other section.
-- New English i18n strings for the file section.
+- New English i18n strings for the file and diff sections.
 
 ### Tests
 
 - Unit tests for the NUL-separated name-status and numstat parsers, including
   renames, binary files, and malformed records.
 - Integration tests against temporary repositories for added and modified
-  files, plus a merge commit compared against its first parent.
-- The suite now has 16 tests.
+  files, root-commit diffs, rename diffs, binary diffs, and a merge commit
+  compared against its first parent.
+- The suite now has 17 tests.
 
 ### Documentation
 
@@ -154,7 +166,7 @@ Goal: show which files a selected commit changed, without leaving the graph.
 | Merge and parent-child relationships | Done |
 | Tags | Not yet |
 | Commit selection details | Partial: metadata, containing branches, changed files and stats; full patch not yet |
-| File diffs with syntax highlighting | Not yet |
+| File diffs with syntax highlighting | Partial: unified diff viewer with line colors; syntax highlighting not yet |
 | Search by message or hash | Not yet |
 | Filter by branch | Not yet |
 | Git actions (checkout, cherry-pick, revert, reset, push, fetch, pull) | Not yet; intentionally read-only |
@@ -164,7 +176,7 @@ Goal: show which files a selected commit changed, without leaving the graph.
 ## Next steps
 
 1. Tags and ref badges on commits.
-2. Inline diff viewer for the files changed by a commit.
+2. Syntax highlighting inside the diff viewer.
 3. Search and branch filtering.
 4. Action layer with explicit confirmation for destructive operations.
 5. Closable tab driven by a launcher.
