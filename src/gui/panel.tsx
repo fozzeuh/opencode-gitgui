@@ -1,7 +1,7 @@
 import type { MountedSession } from "@opencode/plugin/gui"
 import { usePlugin } from "@opencode/plugin/gui"
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js"
-import type { GitBranch, GitCommit } from "../git/reader"
+import type { GitBranch, GitCommit, GitFileChange, GitFileStatus } from "../git/reader"
 import { layoutGraph } from "../graph/layout"
 import { GitGraphRpc } from "../rpc"
 import { combineBranchRefs, countLogicalBranches, type BranchLabel } from "../shared/branches"
@@ -10,6 +10,24 @@ const PAGE_SIZE = 50
 const ROW_HEIGHT = 50
 const LANE_WIDTH = 14
 const GRAPH_COLORS = ["#78a9ff", "#42be65", "#ff7eb6", "#be95ff", "#f1c21b", "#33b1ff"]
+const FILE_STATUS_LABELS: Record<GitFileStatus, string> = {
+  added: "A",
+  modified: "M",
+  deleted: "D",
+  renamed: "R",
+  copied: "C",
+  "type-changed": "T",
+  unknown: "?",
+}
+const FILE_STATUS_COLORS: Record<GitFileStatus, string> = {
+  added: "#42be65",
+  modified: "#78a9ff",
+  deleted: "#da1e28",
+  renamed: "#be95ff",
+  copied: "#33b1ff",
+  "type-changed": "#f1c21b",
+  unknown: "#8d8d8d",
+}
 
 export function GitGraphPanel(props: { readonly session: MountedSession }) {
   const ctx = usePlugin()
@@ -25,10 +43,15 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
   const [loadingMore, setLoadingMore] = createSignal(false)
   const [loadingContainingBranches, setLoadingContainingBranches] = createSignal(false)
   const [containingBranchesError, setContainingBranchesError] = createSignal("")
+  const [files, setFiles] = createSignal<GitFileChange[]>([])
+  const [filesTruncated, setFilesTruncated] = createSignal(false)
+  const [loadingFiles, setLoadingFiles] = createSignal(false)
+  const [filesError, setFilesError] = createSignal("")
   const [detailHeight, setDetailHeight] = createSignal(0)
   const [error, setError] = createSignal("")
   let generation = 0
   let branchRequest = 0
+  let filesRequest = 0
   let detailObserver: ResizeObserver | undefined
 
   const graph = createMemo(() => layoutGraph(commits()))
@@ -46,6 +69,15 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
   const colorForLane = (lane: number) => GRAPH_COLORS[lane % GRAPH_COLORS.length]
   const colorForBranch = (branch: BranchLabel) =>
     colorForLane(laneByHash().get(branch.hash) ?? branchOrder().get(branch.name) ?? 0)
+  const fileStats = createMemo(() => {
+    let additions = 0
+    let deletions = 0
+    for (const file of files()) {
+      additions += file.additions ?? 0
+      deletions += file.deletions ?? 0
+    }
+    return { additions, deletions }
+  })
 
   function observeDetail(element: HTMLElement) {
     detailObserver?.disconnect()
@@ -134,6 +166,34 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
       })
       .finally(() => {
         if (request === branchRequest) setLoadingContainingBranches(false)
+      })
+  })
+
+  createEffect(() => {
+    const commit = selectedCommit()
+    const directory = props.session.directory
+    const request = ++filesRequest
+
+    setFiles([])
+    setFilesTruncated(false)
+    setFilesError("")
+    setLoadingFiles(!!commit)
+    if (!commit) return
+
+    void ctx.client.rpc(GitGraphRpc)
+      .commitFiles({ directory, hash: commit.hash })
+      .then((result) => {
+        if (request !== filesRequest) return
+        setFiles([...result.files])
+        setFilesTruncated(result.truncated)
+      })
+      .catch((cause: unknown) => {
+        if (request === filesRequest) {
+          setFilesError(cause instanceof Error ? cause.message : String(cause))
+        }
+      })
+      .finally(() => {
+        if (request === filesRequest) setLoadingFiles(false)
       })
   })
 
@@ -344,6 +404,97 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
                               {ctx.t("panel.parents")} {commit.parents.map(shortHash).join(", ")}
                             </span>
                           </Show>
+                          <div style={{ display: "flex", "flex-direction": "column", gap: "6px", "margin-top": "2px" }}>
+                            <div style={{ display: "flex", "align-items": "baseline", "flex-wrap": "wrap", gap: "6px" }}>
+                              <strong>{ctx.t("panel.filesChanged")}</strong>
+                              <Show when={!loadingFiles() && !filesError() && files().length > 0}>
+                                <span style={{ "font-size": "11px", opacity: 0.7 }}>
+                                  {filesTruncated() ? `${files().length}+` : files().length} {ctx.t("panel.files")} ·{" "}
+                                  <span style={{ color: "#42be65" }}>+{fileStats().additions}</span>{" "}
+                                  <span style={{ color: "#da1e28" }}>−{fileStats().deletions}</span>
+                                </span>
+                              </Show>
+                            </div>
+                            <Show
+                              when={!loadingFiles()}
+                              fallback={<span style={{ opacity: 0.65 }}>{ctx.t("panel.loadingFiles")}</span>}
+                            >
+                              <Show
+                                when={!filesError()}
+                                fallback={<span role="alert" style={{ color: "#da1e28" }}>{filesError()}</span>}
+                              >
+                                <Show
+                                  when={files().length > 0}
+                                  fallback={<span style={{ opacity: 0.65 }}>{ctx.t("panel.noFiles")}</span>}
+                                >
+                                  <div style={{ display: "flex", "flex-direction": "column", gap: "3px", "max-height": "240px", overflow: "auto" }}>
+                                    <For each={files()}>
+                                      {(file) => (
+                                        <div
+                                          title={file.previousPath ? `${file.previousPath} → ${file.path}` : file.path}
+                                          style={{
+                                            display: "grid",
+                                            "grid-template-columns": "16px minmax(0, 1fr) auto",
+                                            "align-items": "center",
+                                            gap: "6px",
+                                            padding: "2px 4px",
+                                            "border-radius": "3px",
+                                            "background-color": "rgba(127, 127, 127, 0.08)",
+                                            "font-size": "11px",
+                                          }}
+                                        >
+                                          <span
+                                            aria-label={file.status}
+                                            title={file.status}
+                                            style={{
+                                              display: "inline-flex",
+                                              "align-items": "center",
+                                              "justify-content": "center",
+                                              width: "14px",
+                                              height: "14px",
+                                              "border-radius": "3px",
+                                              "font-size": "9px",
+                                              "font-weight": 700,
+                                              color: "#ffffff",
+                                              background: FILE_STATUS_COLORS[file.status],
+                                            }}
+                                          >
+                                            {FILE_STATUS_LABELS[file.status]}
+                                          </span>
+                                          <code
+                                            style={{
+                                              "font-family": "inherit",
+                                              "text-overflow": "ellipsis",
+                                              "white-space": "nowrap",
+                                              overflow: "hidden",
+                                            }}
+                                          >
+                                            {file.previousPath ? `${file.previousPath} → ${file.path}` : file.path}
+                                          </code>
+                                          <span style={{ display: "inline-flex", gap: "5px", "font-variant-numeric": "tabular-nums" }}>
+                                            <Show
+                                              when={file.binary}
+                                              fallback={
+                                                <>
+                                                  <span style={{ color: "#42be65" }}>+{file.additions ?? 0}</span>
+                                                  <span style={{ color: "#da1e28" }}>−{file.deletions ?? 0}</span>
+                                                </>
+                                              }
+                                            >
+                                              <span style={{ opacity: 0.65 }}>{ctx.t("panel.binary")}</span>
+                                            </Show>
+                                          </span>
+                                        </div>
+                                      )}
+                                    </For>
+                                  </div>
+                                  <Show when={filesTruncated()}>
+                                    <span style={{ "font-size": "10px", opacity: 0.65 }}>{ctx.t("panel.filesTruncated")}</span>
+                                  </Show>
+                                </Show>
+                              </Show>
+                            </Show>
+                          </div>
                           <strong style={{ "margin-top": "2px" }}>{ctx.t("panel.containingBranches")}</strong>
                           <Show
                             when={!loadingContainingBranches()}

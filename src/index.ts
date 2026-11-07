@@ -1,5 +1,5 @@
 import { Plugin } from "@opencode/plugin"
-import { readBranches, readBranchesContaining, readHistory } from "./git/reader"
+import { readBranches, readBranchesContaining, readCommitFiles, readHistory } from "./git/reader"
 import { GitGraphRpc } from "./rpc"
 
 const VERSION = "0.1.0"
@@ -18,6 +18,8 @@ export default Plugin.define({
       branches: async (input, call) => readBranches(input.directory, call.signal),
       branchesContaining: async (input, call) =>
         readBranchesContaining(input.directory, input.hash, call.signal),
+      commitFiles: async (input, call) =>
+        readCommitFiles(input.directory, input.hash, call.signal),
     })
   },
 })

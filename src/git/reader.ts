@@ -2,8 +2,27 @@ import { spawn } from "node:child_process"
 import { isAbsolute, resolve } from "node:path"
 
 const MAX_HISTORY = 100
+const MAX_FILES = 500
 const MAX_OUTPUT = 4 * 1024 * 1024
 const COMMAND_TIMEOUT_MS = 10_000
+
+export type GitFileStatus =
+  | "added"
+  | "modified"
+  | "deleted"
+  | "renamed"
+  | "copied"
+  | "type-changed"
+  | "unknown"
+
+export interface GitFileChange {
+  readonly path: string
+  readonly previousPath: string | null
+  readonly status: GitFileStatus
+  readonly additions: number | null
+  readonly deletions: number | null
+  readonly binary: boolean
+}
 
 export interface GitCommit {
   readonly hash: string
@@ -134,6 +153,124 @@ export function parseGitBranches(output: string): GitBranch[] {
   })
 }
 
+interface CommitFileStatusEntry {
+  readonly path: string
+  readonly previousPath: string | null
+  readonly status: GitFileStatus
+}
+
+interface CommitFileStatsEntry {
+  readonly path: string
+  readonly additions: number | null
+  readonly deletions: number | null
+  readonly binary: boolean
+}
+
+const FILE_STATUS: Record<string, GitFileStatus> = {
+  A: "added",
+  M: "modified",
+  D: "deleted",
+  R: "renamed",
+  C: "copied",
+  T: "type-changed",
+}
+
+export function parseCommitFileStatus(output: string): CommitFileStatusEntry[] {
+  const tokens = output.split("\0")
+  const entries: CommitFileStatusEntry[] = []
+  let index = 0
+
+  while (index < tokens.length) {
+    const token = tokens[index]
+    index += 1
+    if (!token) continue
+
+    const code = token[0] ?? ""
+    const status = FILE_STATUS[code] ?? "unknown"
+    const firstPath = tokens[index]
+    index += 1
+    if (firstPath === undefined || firstPath === "") {
+      throw new Error("Git returned an invalid file status record.")
+    }
+
+    if (code === "R" || code === "C") {
+      const secondPath = tokens[index]
+      index += 1
+      if (secondPath === undefined || secondPath === "") {
+        throw new Error("Git returned an invalid file status record.")
+      }
+      entries.push({ previousPath: firstPath, path: secondPath, status })
+    } else {
+      entries.push({ previousPath: null, path: firstPath, status })
+    }
+  }
+
+  return entries
+}
+
+export function parseCommitFileStats(output: string): CommitFileStatsEntry[] {
+  const tokens = output.split("\0")
+  const entries: CommitFileStatsEntry[] = []
+  let index = 0
+
+  while (index < tokens.length) {
+    const token = tokens[index]
+    index += 1
+    if (!token) continue
+
+    const firstTab = token.indexOf("\t")
+    const secondTab = firstTab === -1 ? -1 : token.indexOf("\t", firstTab + 1)
+    if (firstTab === -1 || secondTab === -1) {
+      throw new Error("Git returned an invalid file stats record.")
+    }
+
+    const additionField = token.slice(0, firstTab)
+    const deletionField = token.slice(firstTab + 1, secondTab)
+    let path = token.slice(secondTab + 1)
+    if (!path) {
+      const previousPath = tokens[index]
+      const currentPath = tokens[index + 1]
+      index += 2
+      if (!previousPath || !currentPath) {
+        throw new Error("Git returned an invalid file stats record.")
+      }
+      path = currentPath
+    }
+
+    const binary = additionField === "-" || deletionField === "-"
+    const additions = binary ? null : Number(additionField)
+    const deletions = binary ? null : Number(deletionField)
+    if (
+      (additions !== null && (!Number.isSafeInteger(additions) || additions < 0)) ||
+      (deletions !== null && (!Number.isSafeInteger(deletions) || deletions < 0))
+    ) {
+      throw new Error("Git returned an invalid file stats record.")
+    }
+
+    entries.push({ path, additions, deletions, binary })
+  }
+
+  return entries
+}
+
+export function mergeCommitFiles(
+  statuses: readonly CommitFileStatusEntry[],
+  stats: readonly CommitFileStatsEntry[],
+): GitFileChange[] {
+  const statsByPath = new Map(stats.map((entry) => [entry.path, entry]))
+  return statuses.map((entry) => {
+    const stat = statsByPath.get(entry.path)
+    return {
+      path: entry.path,
+      previousPath: entry.previousPath,
+      status: entry.status,
+      additions: stat?.additions ?? null,
+      deletions: stat?.deletions ?? null,
+      binary: stat?.binary ?? false,
+    }
+  })
+}
+
 export async function readHistory(
   directory: string,
   requestedLimit: number,
@@ -198,4 +335,28 @@ export async function readBranchesContaining(
     signal,
   )
   return { branches: parseGitBranches(output) }
+}
+
+export async function readCommitFiles(
+  directory: string,
+  hash: string,
+  signal?: AbortSignal,
+): Promise<{ files: GitFileChange[]; truncated: boolean }> {
+  if (!/^[0-9a-f]{40,64}$/i.test(hash)) {
+    throw new Error("The commit hash is invalid.")
+  }
+  const cwd = repositoryDirectory(directory)
+  const parentLine = (await runGit(["rev-list", "--parents", "-n", "1", hash], cwd, signal)).trim()
+  const firstParent = parentLine.split(" ")[1]
+  const revisionArgs = ["diff-tree", "--no-commit-id", "-r", "-M"]
+  const revision = firstParent ? [firstParent, hash] : ["--root", hash]
+  const [statusOutput, statsOutput] = await Promise.all([
+    runGit([...revisionArgs, "--name-status", "-z", ...revision], cwd, signal),
+    runGit([...revisionArgs, "--numstat", "-z", ...revision], cwd, signal),
+  ])
+  const files = mergeCommitFiles(
+    parseCommitFileStatus(statusOutput),
+    parseCommitFileStats(statsOutput),
+  )
+  return { files: files.slice(0, MAX_FILES), truncated: files.length > MAX_FILES }
 }

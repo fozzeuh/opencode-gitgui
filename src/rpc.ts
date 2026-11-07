@@ -22,6 +22,23 @@ const Branch = Schema.Struct({
   current: Schema.Boolean,
 })
 
+const FileChange = Schema.Struct({
+  path: Schema.String,
+  previousPath: Schema.NullOr(Schema.String),
+  status: Schema.Literals([
+    "added",
+    "modified",
+    "deleted",
+    "renamed",
+    "copied",
+    "type-changed",
+    "unknown",
+  ]),
+  additions: Schema.NullOr(Schema.Number),
+  deletions: Schema.NullOr(Schema.Number),
+  binary: Schema.Boolean,
+})
+
 export const GitGraphRpc = Rpc.define({
   id: "git-graph",
   methods: {
@@ -65,6 +82,17 @@ export const GitGraphRpc = Rpc.define({
       ),
       output: Schema.toStandardSchemaV1(
         Schema.Struct({ branches: Schema.Array(Branch) }),
+      ),
+    },
+    commitFiles: {
+      input: Schema.toStandardSchemaV1(
+        Schema.Struct({ directory: Schema.String, hash: Schema.String }),
+      ),
+      output: Schema.toStandardSchemaV1(
+        Schema.Struct({
+          files: Schema.Array(FileChange),
+          truncated: Schema.Boolean,
+        }),
       ),
     },
   },

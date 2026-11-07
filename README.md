@@ -5,10 +5,11 @@ panel and a typed RPC bridge between the SolidJS GUI and the server plugin.
 
 > OpenCode V2 only. OpenCode V1 is not supported.
 
-## Status — Phase 2
+## Status — Phase 3
 
 Phase 1 validated plugin loading, opening the panel, and RPC transport. Phase 2
-adds repository reading and an interactive SVG graph:
+added repository reading and an interactive SVG graph. Phase 3 adds commit file
+inspection:
 
 - Multi-branch history, loaded in pages of 50 commits with a **Load more** button.
 - Local and remote branch labels, combined when they have the same name and
@@ -16,7 +17,10 @@ adds repository reading and an interactive SVG graph:
 - Branches containing the selected commit, with colors linked to visible graph
   lanes.
 - SVG commit graph with lanes and merge edges.
-- Select a commit to view its author, date, hash, and parents.
+- Select a commit to view its author, date, hash, parents, and the files it
+  changed.
+- Changed files show their status (added, modified, deleted, renamed, copied,
+  type change), rename source, additions and deletions, and a binary marker.
 - Manually refresh repository data.
 
 This phase is read-only; it exposes no destructive Git commands.
@@ -46,6 +50,7 @@ This phase is read-only; it exposes no destructive Git commands.
 | Portable RPC schemas | `Schema.toStandardSchemaV1` from `effect` |
 | GUI bundle | `gui()` preset from `@opencode/plugin/gui/vite` |
 | History / branches | Git CLI via `node:child_process.spawn`, with the shell disabled |
+| Commit files | `git diff-tree` name-status and numstat against the first parent, with rename detection |
 | Graph | Pure lane-layout algorithm in `src/graph/layout.ts`, rendered as SVG |
 
 ## Verified versions
@@ -156,6 +161,10 @@ npm run check
 - The repository path must be absolute. Each command has a 10-second timeout
   and stdout is limited to 4 MiB.
 - Each history request is capped at 100 commits and offset 10,000.
+- Each commit file request returns at most 500 files; the RPC response includes
+  a `truncated` flag when the commit has more.
+- Merge commits are compared against their first parent, so the list shows what
+  the merge brought in relative to the previous commit on the branch.
 - Commits are read from all visible refs (`git log --all`), so remote branches
   must already have been fetched locally.
 - Actions such as checkout, reset, cherry-pick, and deletion are out of scope

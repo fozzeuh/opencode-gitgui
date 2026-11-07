@@ -88,6 +88,52 @@ Goal: turn the validated shell into a usable read-only Git graph.
 Verification: `npm run check` passes (typecheck, lint, 13 tests, build);
 OpenCode configuration reloaded and the panel checked in Desktop.
 
+## Phase 3 — Commit file visualization
+
+**Date:** 2026-11-07
+
+Goal: show which files a selected commit changed, without leaving the graph.
+
+### Git backend
+
+- New `commitFiles` RPC method and `readCommitFiles` reader.
+- Files and statuses come from `git diff-tree -r -M --name-status -z`; line
+  counts and binary detection come from the matching `--numstat -z` output.
+- NUL-separated parsing keeps paths with spaces, tabs, or newlines intact.
+- Merge commits are compared against their first parent; root commits use
+  `--root` so their initial files are listed.
+- Rename and copy detection is enabled with `-M`; the response keeps the
+  previous path alongside the new one.
+- Status mapping covers added, modified, deleted, renamed, copied, type-changed,
+  and unknown records.
+- Each request returns at most 500 files with a `truncated` flag, on top of the
+  existing 10-second timeout and 4 MiB output cap.
+
+### GUI
+
+- The commit detail card now includes a **Files changed** section.
+- Header shows the file count and total additions/deletions.
+- Each file row shows a colored status badge, the path (with `old → new` for
+  renames), and its additions/deletions or a **Binary** marker.
+- Long file lists scroll inside the detail card so the graph layout stays
+  stable; truncation is called out explicitly.
+- Files and containing branches are fetched independently, so one failure does
+  not hide the other section.
+- New English i18n strings for the file section.
+
+### Tests
+
+- Unit tests for the NUL-separated name-status and numstat parsers, including
+  renames, binary files, and malformed records.
+- Integration tests against temporary repositories for added and modified
+  files, plus a merge commit compared against its first parent.
+- The suite now has 16 tests.
+
+### Documentation
+
+- README status, API table, and limits updated for commit file inspection.
+- The current-status table below moves commit files out of the pending list.
+
 ## Documentation workflow — 2026-11-07
 
 - Added `AGENTS.md` requiring every commit to update `docs/changelog.md` in the
@@ -107,7 +153,7 @@ OpenCode configuration reloaded and the panel checked in Desktop.
 | Current branch / HEAD indicator | Partial: current branch is shown; detached HEAD label planned |
 | Merge and parent-child relationships | Done |
 | Tags | Not yet |
-| Commit selection details | Partial: metadata and containing branches; files and stats not yet |
+| Commit selection details | Partial: metadata, containing branches, changed files and stats; full patch not yet |
 | File diffs with syntax highlighting | Not yet |
 | Search by message or hash | Not yet |
 | Filter by branch | Not yet |
@@ -118,7 +164,7 @@ OpenCode configuration reloaded and the panel checked in Desktop.
 ## Next steps
 
 1. Tags and ref badges on commits.
-2. Commit files, diff stats, and diff viewer.
+2. Inline diff viewer for the files changed by a commit.
 3. Search and branch filtering.
 4. Action layer with explicit confirmation for destructive operations.
 5. Closable tab driven by a launcher.
