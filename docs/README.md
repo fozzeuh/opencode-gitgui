@@ -7,3 +7,5 @@
 
 The main [README](../README.md) covers installation, development, the OpenCode
 V2 APIs used, and the current limits.
+
+Agent and contribution rules live in [AGENTS.md](../AGENTS.md).

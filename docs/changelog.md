@@ -88,6 +88,15 @@ Goal: turn the validated shell into a usable read-only Git graph.
 Verification: `npm run check` passes (typecheck, lint, 13 tests, build);
 OpenCode configuration reloaded and the panel checked in Desktop.
 
+## Documentation workflow — 2026-11-07
+
+- Added `AGENTS.md` requiring every commit to update `docs/changelog.md` in the
+  same commit, and to keep `README.md` in sync when behavior or structure
+  changes.
+- Recorded the change here as the first application of the rule.
+- Commit hashes are not guessed: entries are written before the commit exists,
+  and hashes are added later only when useful.
+
 ## Current status against the original brief
 
 | Original feature | Status |

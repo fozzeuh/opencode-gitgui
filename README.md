@@ -27,6 +27,7 @@ This phase is read-only; it exposes no destructive Git commands.
   verbatim in French.
 - [Changelog](./docs/changelog.md) — phase-by-phase record of the work and the
   remaining scope.
+- [Agent rules](./AGENTS.md) — mandatory changelog update and push policy.
 
 ## OpenCode V2 APIs used
 
