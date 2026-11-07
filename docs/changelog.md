@@ -240,6 +240,19 @@ panel.
 - README now documents the explicit network action, its behavior, and its limit.
 - `npm run check` passes.
 
+## Continuous integration — 2026-11-07
+
+Goal: catch type, lint, test, and build regressions automatically before changes
+are merged.
+
+- Added `.github/workflows/ci.yml` to run the existing `npm run check` pipeline
+  on every push, on pull requests targeting `main`, and on manual dispatch.
+- The workflow uses Node.js 22.12, reproducible `npm ci` installs, a 15-minute
+  job timeout, read-only repository permissions, and cancels superseded runs for
+  the same ref.
+- README now documents when CI runs and which checks it includes. No runtime
+  behavior or product API changes.
+
 ## Current status against the original brief
 
 | Original feature | Status |
