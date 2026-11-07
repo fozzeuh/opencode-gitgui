@@ -4,10 +4,15 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 import {
+  mergeCommitFiles,
+  parseCommitFileStats,
+  parseCommitFileStatus,
   parseGitBranches,
   parseGitLog,
   readBranches,
   readBranchesContaining,
+  readCommitFileDiff,
+  readCommitFiles,
   readHistory,
 } from "../git/reader"
 
@@ -57,6 +62,52 @@ describe("Git branch parsing", () => {
   })
 })
 
+describe("Commit file parsing", () => {
+  it("parses modified, renamed, added, and binary files", () => {
+    const statuses = parseCommitFileStatus(
+      ["M", "src/a.ts", "R100", "old.ts", "new.ts", "A", "img.bin", ""].join("\0"),
+    )
+    const stats = parseCommitFileStats(
+      ["2\t1\tsrc/a.ts", "0\t0\t", "old.ts", "new.ts", "-\t-\timg.bin", ""].join("\0"),
+    )
+
+    expect(mergeCommitFiles(statuses, stats)).toEqual([
+      {
+        path: "src/a.ts",
+        previousPath: null,
+        status: "modified",
+        additions: 2,
+        deletions: 1,
+        binary: false,
+      },
+      {
+        path: "new.ts",
+        previousPath: "old.ts",
+        status: "renamed",
+        additions: 0,
+        deletions: 0,
+        binary: false,
+      },
+      {
+        path: "img.bin",
+        previousPath: null,
+        status: "added",
+        additions: null,
+        deletions: null,
+        binary: true,
+      },
+    ])
+  })
+
+  it("rejects malformed file records", () => {
+    expect(() => parseCommitFileStatus(["M", ""].join("\0"))).toThrow("invalid file status record")
+    expect(() => parseCommitFileStatus(["R100", "old.ts", ""].join("\0"))).toThrow(
+      "invalid file status record",
+    )
+    expect(() => parseCommitFileStats("not-a-stat\0")).toThrow("invalid file stats record")
+  })
+})
+
 describe("Git reader integration", () => {
   it("reads paginated history and local/remote branches from a real repository", async () => {
     const directory = mkdtempSync(join(tmpdir(), "git-graph-reader-"))
@@ -94,6 +145,12 @@ describe("Git reader integration", () => {
       const secondPage = await readHistory(directory, 1, 1)
       const branchInfo = await readBranches(directory)
       const containing = await readBranchesContaining(directory, featureHash)
+      const featureFiles = await readCommitFiles(directory, featureHash)
+      const mainFiles = await readCommitFiles(directory, currentHash)
+      const initialHash = allHistory.commits.at(-1)!.hash
+      const featureDiff = await readCommitFileDiff(directory, featureHash, "feature.txt", null)
+      const mainDiff = await readCommitFileDiff(directory, currentHash, "sample.txt", null)
+      const initialDiff = await readCommitFileDiff(directory, initialHash, "sample.txt", null)
 
       expect(firstPage.root).toBe(realpathSync(directory))
       expect(firstPage.commits).toHaveLength(1)
@@ -109,6 +166,126 @@ describe("Git reader integration", () => {
         ]),
       )
       expect(containing.branches.map((branch) => branch.name)).toEqual(["feature"])
+      expect(featureFiles.files).toEqual([
+        {
+          path: "feature.txt",
+          previousPath: null,
+          status: "added",
+          additions: 1,
+          deletions: 0,
+          binary: false,
+        },
+      ])
+      expect(featureFiles.truncated).toBe(false)
+      expect(mainFiles.files).toEqual([
+        {
+          path: "sample.txt",
+          previousPath: null,
+          status: "modified",
+          additions: 1,
+          deletions: 1,
+          binary: false,
+        },
+      ])
+      expect(featureDiff.binary).toBe(false)
+      expect(featureDiff.truncated).toBe(false)
+      expect(featureDiff.patch).toContain("+feature-only")
+      expect(mainDiff.patch).toContain("-first")
+      expect(mainDiff.patch).toContain("+second")
+      expect(initialDiff.patch).toContain("+first")
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("reads files changed by a merge against its first parent", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "git-graph-merge-"))
+    const git = (args: string[]) =>
+      execFileSync("git", args, {
+        cwd: directory,
+        stdio: "ignore",
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: "Git Graph Test",
+          GIT_AUTHOR_EMAIL: "git-graph@example.invalid",
+          GIT_COMMITTER_NAME: "Git Graph Test",
+          GIT_COMMITTER_EMAIL: "git-graph@example.invalid",
+        },
+      })
+
+    try {
+      git(["init", "-b", "main"])
+      writeFileSync(join(directory, "base.txt"), "base\n")
+      git(["add", "base.txt"])
+      git(["commit", "-m", "Base commit"])
+      git(["checkout", "-b", "feature"])
+      writeFileSync(join(directory, "feature.txt"), "feature\n")
+      git(["add", "feature.txt"])
+      git(["commit", "-m", "Feature commit"])
+      git(["checkout", "main"])
+      writeFileSync(join(directory, "main.txt"), "main\n")
+      git(["add", "main.txt"])
+      git(["commit", "-m", "Main commit"])
+      git(["merge", "--no-ff", "feature", "-m", "Merge feature"])
+      const mergeHash = execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: directory,
+        encoding: "utf8",
+      }).trim()
+
+      const mergeFiles = await readCommitFiles(directory, mergeHash)
+
+      expect(mergeFiles.files).toEqual([
+        {
+          path: "feature.txt",
+          previousPath: null,
+          status: "added",
+          additions: 1,
+          deletions: 0,
+          binary: false,
+        },
+      ])
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("reads diffs for renamed and binary files", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "git-graph-diff-"))
+    const git = (args: string[]) =>
+      execFileSync("git", args, {
+        cwd: directory,
+        stdio: "ignore",
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: "Git Graph Test",
+          GIT_AUTHOR_EMAIL: "git-graph@example.invalid",
+          GIT_COMMITTER_NAME: "Git Graph Test",
+          GIT_COMMITTER_EMAIL: "git-graph@example.invalid",
+        },
+      })
+
+    try {
+      git(["init", "-b", "main"])
+      writeFileSync(join(directory, "old.txt"), "content\n")
+      git(["add", "old.txt"])
+      git(["commit", "-m", "Base commit"])
+      git(["mv", "old.txt", "new.txt"])
+      writeFileSync(join(directory, "image.bin"), "bin\0data")
+      git(["add", "image.bin"])
+      git(["commit", "-m", "Rename and binary"])
+      const hash = execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: directory,
+        encoding: "utf8",
+      }).trim()
+
+      const renameDiff = await readCommitFileDiff(directory, hash, "new.txt", "old.txt")
+      const binaryDiff = await readCommitFileDiff(directory, hash, "image.bin", null)
+
+      expect(renameDiff.binary).toBe(false)
+      expect(renameDiff.patch).toContain("rename from old.txt")
+      expect(renameDiff.patch).toContain("rename to new.txt")
+      expect(binaryDiff.binary).toBe(true)
+      expect(binaryDiff.patch).toContain("Binary files")
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }
