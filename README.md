@@ -135,8 +135,10 @@ npm run build
 npm run check
 ```
 
-GitHub Actions runs `npm run check` on every push, on pull requests targeting
-`main`, and on manual workflow dispatch. The workflow uses Node.js 22.12 and
+GitHub Actions runs `npm run check` on pushes to `main`, on pull requests that
+target `main` and are opened, updated, or reopened, and on manual workflow
+dispatch. Pushes to feature branches do not start a separate run: the same commit
+is already checked once by its pull request. The workflow uses Node.js 22.12 and
 `npm ci`; it covers typecheck, lint, tests, and the production build.
 
 ## Local installation

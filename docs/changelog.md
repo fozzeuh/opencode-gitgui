@@ -246,10 +246,14 @@ Goal: catch type, lint, test, and build regressions automatically before changes
 are merged.
 
 - Added `.github/workflows/ci.yml` to run the existing `npm run check` pipeline
-  on every push, on pull requests targeting `main`, and on manual dispatch.
+  on pushes to `main`, on pull requests targeting `main` (opened, updated, or
+  reopened), and on manual dispatch.
+- Pushes to feature branches are intentionally excluded: the pull request already
+  checks the same commit, so triggering both events would run the pipeline twice
+  for every update. A `concurrency` group still cancels superseded runs for the
+  same ref.
 - The workflow uses Node.js 22.12, reproducible `npm ci` installs, a 15-minute
-  job timeout, read-only repository permissions, and cancels superseded runs for
-  the same ref.
+  job timeout, and read-only repository permissions.
 - README now documents when CI runs and which checks it includes. No runtime
   behavior or product API changes.
 
