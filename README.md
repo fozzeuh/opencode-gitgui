@@ -20,7 +20,8 @@ inspection. Phase 4 completes the read-only explorer:
 - The current `HEAD` commit is marked in the list, and a detached checkout shows
   the short hash beside the **Detached HEAD** label.
 - Search by commit message or hash against the full repository history, not only
-  the loaded page.
+  the loaded page. Results update as you type after 2 characters, with a 300 ms
+  debounce; Enter and the **Search** button apply the query immediately.
 - Filter the history by any local or remote branch; search and filter combine.
 - Branches containing the selected commit, with colors linked to a stable
   per-branch palette rather than graph lanes.
@@ -193,9 +194,10 @@ is already checked once by its pull request. The workflow uses Node.js 22.12 and
   4 MiB.
 - Each history request is capped at 300 commits and offset 10,000. The panel
   loads 300 commits initially and appends 100 per **Load more** request.
-- Search queries are capped at 500 characters. Hash-like queries resolve through
-  `git rev-parse`; otherwise they match commit messages with a fixed-string,
-  case-insensitive `git log --grep`.
+- Search queries are capped at 500 characters. The panel needs at least 2
+  characters and waits 300 ms after the last keystroke before searching. Hash-like
+  queries resolve through `git rev-parse`; otherwise they match commit messages
+  with a fixed-string, case-insensitive `git log --grep`.
 - Branch filters are validated against `refs/heads/<name>` and
   `refs/remotes/<name>` before being passed to Git; an unknown branch is
   rejected instead of being treated as a revision expression.

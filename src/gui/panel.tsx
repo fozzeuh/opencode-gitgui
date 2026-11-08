@@ -20,6 +20,8 @@ import {
 
 const INITIAL_PAGE_SIZE = 300
 const PAGE_SIZE = 100
+const MIN_SEARCH_LENGTH = 2
+const SEARCH_DEBOUNCE_MS = 300
 const ROW_HEIGHT = 50
 const LANE_WIDTH = 14
 const FILE_STATUS_LABELS: Record<GitFileStatus, string> = {
@@ -231,8 +233,13 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
     }
   }
 
+  function submittedQuery(): string {
+    const input = searchInput().trim()
+    return input.length >= MIN_SEARCH_LENGTH ? input : ""
+  }
+
   function submitSearch() {
-    const next = searchInput().trim()
+    const next = submittedQuery()
     if (next === appliedQuery()) void refresh(props.session.directory)
     else setAppliedQuery(next)
   }
@@ -247,6 +254,19 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
     if (name === branchFilter()) void refresh(props.session.directory)
     else setBranchFilter(name)
   }
+
+  // Apply live search after a short pause, so typing does not trigger one Git
+  // request per keystroke. Below the minimum length the full history returns.
+  createEffect(() => {
+    const next = submittedQuery()
+    if (next === appliedQuery()) return
+    if (next === "") {
+      setAppliedQuery("")
+      return
+    }
+    const timer = setTimeout(() => setAppliedQuery(next), SEARCH_DEBOUNCE_MS)
+    onCleanup(() => clearTimeout(timer))
+  })
 
   createEffect(() => {
     const directory = props.session.directory
@@ -458,6 +478,9 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
             label={`${ctx.t("panel.branchFilter")}: ${branchFilter() ?? ctx.t("panel.allBranches")}`}
             items={branchFilterItems()}
           />
+          <Show when={searchInput().trim().length > 0 && searchInput().trim().length < MIN_SEARCH_LENGTH}>
+            <span style={{ opacity: 0.65 }}>{ctx.t("panel.searchMin")}</span>
+          </Show>
           <Show when={appliedQuery()}>
             <span style={{ opacity: 0.65 }}>
               {ctx.t("panel.searchResults")}: “{appliedQuery()}”
