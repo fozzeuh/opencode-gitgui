@@ -24,7 +24,6 @@ export default Plugin.define({
       "panel.search": "Search",
       "panel.searchPlaceholder": "Search a message or hash",
       "panel.searchMin": "Type at least 2 characters to search.",
-      "panel.clearSearch": "Clear",
       "panel.searchResults": "Results for",
       "panel.branchFilter": "Branch",
       "panel.allBranches": "All branches",

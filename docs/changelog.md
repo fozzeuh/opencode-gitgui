@@ -300,12 +300,12 @@ Goal: finish the read-only explorer before adding Git actions.
 - Branch filters resolve to `refs/heads/<name>` or `refs/remotes/<name>` before
   being passed to Git. Unknown or unsafe names are rejected, and no arbitrary
   revision expression comes from the GUI.
-- The panel adds a native text field, a clear action, and a native branch menu.
-  Search runs while typing once the query has at least 2 characters, with a
-  300 ms debounce so a burst of keystrokes produces one Git request. Enter and
-  the **Search** button apply the current query immediately. Search and branch
-  filter combine, and the empty state distinguishes "no commits" from "no
-  results".
+- The panel adds a native text field and a native branch menu. Search runs while
+  typing once the query has at least 2 characters, with a 300 ms debounce so a
+  burst of keystrokes produces one Git request. Enter applies the current query
+  immediately, and clearing the field restores the full history. Search and
+  branch filter combine, and the empty state distinguishes "no commits" from
+  "no results".
 
 ### Cleanup and tests
 

@@ -244,12 +244,6 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
     else setAppliedQuery(next)
   }
 
-  function clearSearch() {
-    setSearchInput("")
-    if (appliedQuery() === "") void refresh(props.session.directory)
-    else setAppliedQuery("")
-  }
-
   function chooseBranch(name: string | null) {
     if (name === branchFilter()) void refresh(props.session.directory)
     else setBranchFilter(name)
@@ -451,7 +445,7 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
       </header>
 
       <section style={{ display: "flex", "flex-direction": "column", gap: "6px" }}>
-        <div style={{ display: "flex", gap: "6px", "align-items": "center" }}>
+        <div style={{ display: "flex" }}>
           <div style={{ flex: 1, "min-width": 0 }}>
             <ctx.ui.TextInput
               type="search"
@@ -462,14 +456,6 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
               onSubmit={submitSearch}
             />
           </div>
-          <ctx.ui.Button size="small" onClick={submitSearch}>
-            {ctx.t("panel.search")}
-          </ctx.ui.Button>
-          <Show when={appliedQuery()}>
-            <ctx.ui.Button size="small" onClick={clearSearch}>
-              {ctx.t("panel.clearSearch")}
-            </ctx.ui.Button>
-          </Show>
         </div>
         <div style={{ display: "flex", gap: "6px", "align-items": "center", "font-size": "11px" }}>
           <ctx.ui.Menu

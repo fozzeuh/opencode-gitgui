@@ -21,7 +21,8 @@ inspection. Phase 4 completes the read-only explorer:
   the short hash beside the **Detached HEAD** label.
 - Search by commit message or hash against the full repository history, not only
   the loaded page. Results update as you type after 2 characters, with a 300 ms
-  debounce; Enter and the **Search** button apply the query immediately.
+  debounce; Enter applies the query immediately, and clearing the field restores
+  the full history.
 - Filter the history by any local or remote branch; search and filter combine.
 - Branches containing the selected commit, with colors linked to a stable
   per-branch palette rather than graph lanes.
