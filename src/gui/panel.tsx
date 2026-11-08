@@ -3,6 +3,7 @@ import { usePlugin } from "@opencode/plugin/gui"
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js"
 import type { GitBranch, GitCommit, GitFileChange, GitFileStatus } from "../git/reader"
 import { layoutGraph } from "../graph/layout"
+import { edgePath } from "../graph/render"
 import { GitGraphRpc } from "../rpc"
 import { combineBranchRefs, countLogicalBranches, type BranchLabel } from "../shared/branches"
 import { BranchPill } from "./branch-pill"
@@ -482,15 +483,18 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
                           if (parentIndex === undefined) return null
                           const parentY = rowTop(parentIndex) + ROW_HEIGHT / 2
                           const parentX = 8 + edge.toLane * LANE_WIDTH
-                          const middle = (y + parentY) / 2
                           const color =
                             graphColors().edges.get(edgeColorKey(row.hash, edge.parent)) ??
                             laneColor(edge.merge ? edge.toLane : edge.fromLane)
-                          // Stop merge arrows just above the parent node so the node does not hide them.
-                          const endY = edge.merge ? parentY - 6 : parentY
+                          // Merge edges stop just below the merge node so their arrow
+                          // points up into it; regular edges run down to the parent.
+                          const path = edgePath(
+                            { fromX: x, fromY: y, toX: parentX, toY: parentY },
+                            edge.merge,
+                          )
                           return (
                             <path
-                              d={`M ${x} ${y} C ${x} ${middle}, ${parentX} ${middle}, ${parentX} ${endY}`}
+                              d={path}
                               fill="none"
                               stroke={color}
                               stroke-width={edge.merge ? 1.75 : 2}

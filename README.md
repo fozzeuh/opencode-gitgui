@@ -20,8 +20,8 @@ inspection:
   feature branch stays visually distinct from `main` even on a linear history.
 - Classic side-branch layout: a merged branch leaves the main line, runs beside
   it, and visibly rejoins at the fork point.
-- Merge commits use an outer ring, dashed merge links, and an arrow into the
-  merged branch.
+- Merge commits use an outer ring, dashed merge links, and an arrow that points
+  into the merge commit, showing the side branch flowing into it.
 - Branch tips are shown as colored pills directly on the commit rows.
 - Select a commit to view its author, date, hash, parents, and the files it
   changed.
@@ -206,7 +206,8 @@ src/
 ├── git/
 │   └── reader.ts     # Git commands, history reading, and parsing
 ├── graph/
-│   └── layout.ts     # graph lane and edge layout
+│   ├── layout.ts     # graph lane and edge layout
+│   └── render.ts     # SVG edge paths and merge arrow direction
 ├── gui.tsx           # GUI entry: Panel, MenuItem, Command
 ├── gui/
 │   ├── branch-pill.tsx # shared branch reference badge
@@ -220,5 +221,6 @@ src/
     ├── colors.test.ts
     ├── git-reader.test.ts
     ├── graph-layout.test.ts
+    ├── graph-render.test.ts
     └── ids.test.ts
 ```
