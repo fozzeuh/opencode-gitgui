@@ -257,6 +257,23 @@ are merged.
 - README now documents when CI runs and which checks it includes. No runtime
   behavior or product API changes.
 
+## Merge arrow direction — 2026-11-08
+
+Goal: make the direction of a merge readable without guessing.
+
+- The dashed second-parent link used to be drawn from the merge commit down to
+  the parent, so its arrowhead pointed away from the merge and into an older
+  commit.
+- Merge links are now drawn from the second parent up to the merge commit, and
+  stop just below its node. The arrowhead points up into the merge, which shows
+  the side branch flowing into the merge instead of history flowing out of it.
+- The path geometry lives in `src/graph/render.ts` so the direction is covered
+  by unit tests, including a check that the arrow tip stays between the merge
+  commit and its parent.
+- Non-merge edges keep their existing downward direction, and no other graph
+  geometry, color, layout, or RPC behavior changed.
+- `npm run check` passes.
+
 ## Current status against the original brief
 
 | Original feature | Status |
