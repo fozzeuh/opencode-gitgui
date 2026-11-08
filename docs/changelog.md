@@ -274,6 +274,44 @@ Goal: make the direction of a merge readable without guessing.
   geometry, color, layout, or RPC behavior changed.
 - `npm run check` passes.
 
+## Read-only navigation — 2026-11-08
+
+Goal: finish the read-only explorer before adding Git actions.
+
+### History and refs
+
+- The initial history request now loads 300 commits, matching the brief, and
+  **Load more** appends 100 commits per request. The server cap moved from 100
+  to 300.
+- New `tags` RPC and `readTags` reader built on `git for-each-ref refs/tags`.
+  Annotated tags are peeled to their commit, and tags that do not point at a
+  commit are ignored.
+- Tags are rendered as badges on commit rows and in the commit detail card.
+- The `branches` RPC now returns the resolved `HEAD` hash alongside the current
+  branch name. Commit rows and the detail card mark the `HEAD` commit, and a
+  detached checkout shows the short hash next to **Detached HEAD**.
+
+### Search and branch filtering
+
+- History requests accept an optional message/hash query and branch filter.
+- Hash-like queries are resolved with `git rev-parse` first; otherwise the
+  server runs a fixed-string, case-insensitive `git log --grep`, so search covers
+  the whole repository instead of only the loaded page.
+- Branch filters resolve to `refs/heads/<name>` or `refs/remotes/<name>` before
+  being passed to Git. Unknown or unsafe names are rejected, and no arbitrary
+  revision expression comes from the GUI.
+- The panel adds a native text field with Enter/button submission, a clear
+  action, and a native branch menu. Search and branch filter combine, and the
+  empty state distinguishes "no commits" from "no results".
+
+### Cleanup and tests
+
+- Two leftover French strings in `src/git/reader.ts` moved to English.
+- New unit tests cover tag parsing, including annotated and non-commit tags.
+- Integration tests cover tags, `HEAD` on a normal and detached checkout, an
+  unborn branch, message search, hash search, and local/remote branch filters.
+- The suite now has 31 tests, and `npm run check` passes.
+
 ## Current status against the original brief
 
 | Original feature | Status |
@@ -281,22 +319,22 @@ Goal: make the direction of a merge readable without guessing.
 | Native V2 panel and RPC | Done |
 | Multi-branch history and pagination | Done |
 | Local and remote branches | Done |
-| Current branch / HEAD indicator | Partial: current branch is shown; detached HEAD label planned |
+| Current branch / HEAD indicator | Done: current branch, HEAD commit badge, detached HEAD short hash |
 | Merge and parent-child relationships | Done |
-| Tags | Not yet |
-| Commit selection details | Partial: metadata, containing branches, changed files and stats; full patch not yet |
+| Tags | Done: badges on commits, annotated tags peeled to their commit |
+| Commit selection details | Partial: metadata, tags, containing branches, changed files and stats; full patch not yet |
 | File diffs with syntax highlighting | Partial: unified diff viewer with line colors; syntax highlighting not yet |
-| Search by message or hash | Not yet |
-| Filter by branch | Not yet |
+| Search by message or hash | Done: full history, server-side, combines with branch filter |
+| Filter by branch | Done: local and remote branches |
 | Git actions (checkout, cherry-pick, revert, reset, push, fetch, pull) | Partial: explicit Fetch all updates configured remotes; other actions not yet |
 | Confirmation flows for destructive actions | Not yet |
 | Closable tab and launcher | Not yet; tab is pinned |
 
 ## Next steps
 
-1. Tags and ref badges on commits.
-2. Syntax highlighting inside the diff viewer.
-3. Search and branch filtering.
-4. Action layer with explicit confirmation for destructive operations.
-5. Closable tab driven by a launcher.
-6. Error and conflict handling hardening.
+1. Syntax highlighting inside the diff viewer.
+2. Action layer with explicit confirmation for destructive operations.
+3. Closable tab driven by a launcher.
+4. Error and conflict handling hardening.
+5. Remaining integration tests for empty repositories, tags, conflicts, local
+   changes, and command failures.

@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process"
 import { isAbsolute, resolve } from "node:path"
 
-const MAX_HISTORY = 100
+const MAX_HISTORY = 300
+const MAX_SEARCH_LENGTH = 500
 const MAX_FILES = 500
 const MAX_PATCH = 256 * 1024
 const MAX_OUTPUT = 4 * 1024 * 1024
@@ -46,6 +47,18 @@ export interface GitBranch {
   readonly hash: string
   readonly remote: boolean
   readonly current: boolean
+}
+
+export interface GitTag {
+  readonly name: string
+  readonly hash: string
+}
+
+export interface HistoryOptions {
+  /** Message or hash search. Empty or omitted means no search. */
+  readonly query?: string
+  /** Logical branch name to follow; null or omitted means every ref. */
+  readonly branch?: string | null
 }
 
 function repositoryDirectory(directory: string): string {
@@ -114,7 +127,7 @@ function runGit(
       stderr.push(kept)
       errorSize += kept.length
     })
-    child.on("error", (error) => finish(new Error(`Impossible de lancer Git : ${error.message}`)))
+    child.on("error", (error) => finish(new Error(`Unable to launch Git: ${error.message}`)))
     child.on("close", (code) => {
       if (code === 0) {
         finish(undefined, Buffer.concat(stdout).toString("utf8"))
@@ -145,7 +158,7 @@ export function parseGitLog(output: string): GitCommit[] {
         parents: parentField ? parentField.split(" ").filter(Boolean) : [],
         author: author ?? "",
         timestamp: parsedTimestamp,
-        subject: subject ?? "(sans sujet)",
+        subject: subject ?? "(no subject)",
         decorations: decorations ?? "",
       }
     })
@@ -163,6 +176,20 @@ export function parseGitBranches(output: string): GitBranch[] {
       remote,
       current: head === "*",
     }]
+  })
+}
+
+/**
+ * Parse `for-each-ref` output for tags. Annotated tags are peeled to the
+ * commit they point at, and tags that do not point at a commit are ignored.
+ */
+export function parseGitTags(output: string): GitTag[] {
+  return output.split("\n").filter(Boolean).flatMap((line): GitTag[] => {
+    const [name = "", objectType = "", objectHash = "", peeledType = "", peeledHash = ""] = line.split("\0")
+    const type = peeledType || objectType
+    const hash = peeledHash || objectHash
+    if (!name || type !== "commit" || !/^[0-9a-f]{40,64}$/i.test(hash)) return []
+    return [{ name, hash }]
   })
 }
 
@@ -284,11 +311,74 @@ export function mergeCommitFiles(
   })
 }
 
+function normalizeQuery(value: string | undefined): string {
+  const query = (value ?? "").trim()
+  if (query.length > MAX_SEARCH_LENGTH) {
+    throw new Error("The search query is too long.")
+  }
+  if (/[\0\r\n]/.test(query)) {
+    throw new Error("The search query contains invalid characters.")
+  }
+  return query
+}
+
+function validBranchName(value: string): string {
+  const name = value.trim()
+  if (
+    !name ||
+    name.length > 1024 ||
+    name.startsWith("-") ||
+    name.startsWith("/") ||
+    name.endsWith("/") ||
+    name.includes("..") ||
+    name.includes("@{") ||
+    /[\0\r\n ~^:?*[\\]/.test(name)
+  ) {
+    throw new Error("The branch name is invalid.")
+  }
+  return name
+}
+
+/** Resolve a logical branch label to a full local or remote ref. */
+async function resolveBranchRef(
+  cwd: string,
+  branch: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const name = validBranchName(branch)
+  for (const ref of [`refs/heads/${name}`, `refs/remotes/${name}`]) {
+    try {
+      await runGit(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], cwd, signal)
+      return ref
+    } catch (cause) {
+      if (signal?.aborted) throw cause
+    }
+  }
+  throw new Error(`Unknown branch: ${name}`)
+}
+
+/** Resolve a full or abbreviated hash to a commit, if the query is hash-like. */
+async function resolveCommit(
+  cwd: string,
+  query: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  if (!/^[0-9a-f]{4,64}$/i.test(query)) return null
+  try {
+    const hash = (await runGit(["rev-parse", "--verify", "--quiet", `${query}^{commit}`], cwd, signal)).trim()
+    return /^[0-9a-f]{40,64}$/i.test(hash) ? hash : null
+  } catch (cause) {
+    if (signal?.aborted) throw cause
+    return null
+  }
+}
+
 export async function readHistory(
   directory: string,
   requestedLimit: number,
   requestedOffset: number,
   signal?: AbortSignal,
+  options: HistoryOptions = {},
 ): Promise<{ root: string; commits: GitCommit[] }> {
   const cwd = repositoryDirectory(directory)
   const root = (await runGit(["rev-parse", "--show-toplevel"], cwd, signal)).trim()
@@ -298,30 +388,55 @@ export async function readHistory(
   const offset = Number.isFinite(requestedOffset)
     ? Math.max(0, Math.min(10_000, Math.floor(requestedOffset)))
     : 0
+  const query = normalizeQuery(options.query)
+  const branchRef = options.branch ? await resolveBranchRef(cwd, options.branch, signal) : null
   const format = "%H%x00%P%x00%an%x00%at%x00%s%x00%D%x1e"
-  const output = await runGit(
-    [
-      "log",
-      "--all",
-      "--topo-order",
-      `--max-count=${limit}`,
-      `--skip=${offset}`,
-      `--format=${format}`,
-    ],
-    cwd,
-    signal,
-  )
+
+  const hash = query ? await resolveCommit(cwd, query, signal) : null
+  if (hash) {
+    if (offset > 0) return { root, commits: [] }
+    if (branchRef) {
+      try {
+        await runGit(["merge-base", "--is-ancestor", hash, branchRef], cwd, signal)
+      } catch (cause) {
+        if (signal?.aborted) throw cause
+        return { root, commits: [] }
+      }
+    }
+    const output = await runGit(["show", "-s", `--format=${format}`, hash], cwd, signal)
+    return { root, commits: parseGitLog(output) }
+  }
+
+  const args = [
+    "log",
+    ...(branchRef ? [branchRef] : ["--all"]),
+    "--topo-order",
+    `--max-count=${limit}`,
+    `--skip=${offset}`,
+    `--format=${format}`,
+  ]
+  if (query) {
+    args.push("--fixed-strings", "--regexp-ignore-case", `--grep=${query}`)
+  }
+  const output = await runGit(args, cwd, signal)
   return { root, commits: parseGitLog(output) }
 }
 
 export async function readBranches(
   directory: string,
   signal?: AbortSignal,
-): Promise<{ current: string | null; branches: GitBranch[] }> {
+): Promise<{ current: string | null; head: string | null; branches: GitBranch[] }> {
   const cwd = repositoryDirectory(directory)
   const currentOutput = await runGit(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd, signal).catch(
     () => "",
   )
+  let head: string | null = null
+  try {
+    const resolved = (await runGit(["rev-parse", "--verify", "HEAD"], cwd, signal)).trim()
+    if (/^[0-9a-f]{40,64}$/i.test(resolved)) head = resolved
+  } catch (cause) {
+    if (signal?.aborted) throw cause
+  }
   const format = "%(refname)%00%(objectname)%00%(HEAD)%00"
   const output = await runGit(
     ["for-each-ref", `--format=${format}`, "refs/heads", "refs/remotes"],
@@ -329,7 +444,18 @@ export async function readBranches(
     signal,
   )
   const branches = parseGitBranches(output)
-  return { current: currentOutput.trim() || null, branches }
+  return { current: currentOutput.trim() || null, head, branches }
+}
+
+export async function readTags(
+  directory: string,
+  signal?: AbortSignal,
+): Promise<{ tags: GitTag[] }> {
+  const cwd = repositoryDirectory(directory)
+  const format =
+    "%(refname:short)%00%(objecttype)%00%(objectname)%00%(*objecttype)%00%(*objectname)%00"
+  const output = await runGit(["for-each-ref", `--format=${format}`, "refs/tags"], cwd, signal)
+  return { tags: parseGitTags(output) }
 }
 
 /** Fetch updates for every configured remote; this is only invoked on user request. */

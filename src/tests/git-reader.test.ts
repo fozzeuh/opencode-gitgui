@@ -10,11 +10,13 @@ import {
   parseCommitFileStatus,
   parseGitBranches,
   parseGitLog,
+  parseGitTags,
   readBranches,
   readBranchesContaining,
   readCommitFileDiff,
   readCommitFiles,
   readHistory,
+  readTags,
 } from "../git/reader"
 
 const firstHash = "a".repeat(40)
@@ -60,6 +62,26 @@ describe("Git branch parsing", () => {
       { name: "main", hash: firstHash, remote: false, current: true },
       { name: "origin/main", hash: parentHash, remote: true, current: false },
     ])
+  })
+})
+
+describe("Git tag parsing", () => {
+  it("uses the peeled commit for annotated tags and ignores non-commit tags", () => {
+    const output = [
+      `v1.0\0commit\0${firstHash}\0\0\0`,
+      `v2.0\0tag\0${parentHash}\0commit\0${firstHash}\0`,
+      `blob-tag\0blob\0${parentHash}\0\0\0`,
+      "",
+    ].join("\n")
+
+    expect(parseGitTags(output)).toEqual([
+      { name: "v1.0", hash: firstHash },
+      { name: "v2.0", hash: firstHash },
+    ])
+  })
+
+  it("ignores malformed tag records", () => {
+    expect(parseGitTags(["v1\0commit\0not-a-hash\0\0\0", "\0\0\0\0\0"].join("\n"))).toEqual([])
   })
 })
 
@@ -201,10 +223,19 @@ describe("Git reader integration", () => {
       const firstPage = await readHistory(directory, 1, 0)
       const secondPage = await readHistory(directory, 1, 1)
       const branchInfo = await readBranches(directory)
+      const initialHash = allHistory.commits.at(-1)!.hash
+      git(["tag", "v1.0", currentHash])
+      git(["tag", "-a", "v0.1", "-m", "first release", initialHash])
+      const tagInfo = await readTags(directory)
+      const messageSearch = await readHistory(directory, 10, 0, undefined, { query: "Feature-only" })
+      const hashSearch = await readHistory(directory, 10, 0, undefined, {
+        query: featureHash.slice(0, 7),
+      })
+      const featureHistory = await readHistory(directory, 10, 0, undefined, { branch: "feature" })
+      const remoteHistory = await readHistory(directory, 10, 0, undefined, { branch: "origin/main" })
       const containing = await readBranchesContaining(directory, featureHash)
       const featureFiles = await readCommitFiles(directory, featureHash)
       const mainFiles = await readCommitFiles(directory, currentHash)
-      const initialHash = allHistory.commits.at(-1)!.hash
       const featureDiff = await readCommitFileDiff(directory, featureHash, "feature.txt", null)
       const mainDiff = await readCommitFileDiff(directory, currentHash, "sample.txt", null)
       const initialDiff = await readCommitFileDiff(directory, initialHash, "sample.txt", null)
@@ -215,6 +246,7 @@ describe("Git reader integration", () => {
       expect(secondPage.commits[0]?.hash).toBe(allHistory.commits[1]?.hash)
       expect(allHistory.commits.map((commit) => commit.subject)).toContain("Feature-only commit")
       expect(branchInfo.current).toBe("main")
+      expect(branchInfo.head).toBe(currentHash)
       expect(branchInfo.branches).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ name: "main", current: true, remote: false }),
@@ -222,6 +254,23 @@ describe("Git reader integration", () => {
           expect.objectContaining({ name: "origin/main", remote: true }),
         ]),
       )
+      expect(tagInfo.tags).toEqual(
+        expect.arrayContaining([
+          { name: "v1.0", hash: currentHash },
+          { name: "v0.1", hash: initialHash },
+        ]),
+      )
+      expect(messageSearch.commits.map((commit) => commit.hash)).toEqual([featureHash])
+      expect(hashSearch.commits.map((commit) => commit.hash)).toEqual([featureHash])
+      expect(featureHistory.commits.map((commit) => commit.subject)).toEqual([
+        "Feature-only commit",
+        "Second commit",
+        "Initial commit",
+      ])
+      expect(remoteHistory.commits.map((commit) => commit.subject)).toEqual([
+        "Second commit",
+        "Initial commit",
+      ])
       expect(containing.branches.map((branch) => branch.name)).toEqual(["feature"])
       expect(featureFiles.files).toEqual([
         {
@@ -252,6 +301,50 @@ describe("Git reader integration", () => {
       expect(initialDiff.patch).toContain("+first")
     } finally {
       rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("reports HEAD on a detached checkout and an unborn branch", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "git-graph-head-"))
+    const empty = mkdtempSync(join(tmpdir(), "git-graph-empty-"))
+    const git = (cwd: string, args: string[]) =>
+      execFileSync("git", args, {
+        cwd,
+        stdio: "ignore",
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: "Git Graph Test",
+          GIT_AUTHOR_EMAIL: "git-graph@example.invalid",
+          GIT_COMMITTER_NAME: "Git Graph Test",
+          GIT_COMMITTER_EMAIL: "git-graph@example.invalid",
+        },
+      })
+
+    try {
+      git(directory, ["init", "-b", "main"])
+      writeFileSync(join(directory, "sample.txt"), "first\n")
+      git(directory, ["add", "sample.txt"])
+      git(directory, ["commit", "-m", "Initial commit"])
+      const hash = execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: directory,
+        encoding: "utf8",
+      }).trim()
+      git(directory, ["checkout", "--detach"])
+
+      const detached = await readBranches(directory)
+
+      expect(detached.current).toBeNull()
+      expect(detached.head).toBe(hash)
+
+      git(empty, ["init", "-b", "main"])
+      const unborn = await readBranches(empty)
+
+      expect(unborn.current).toBe("main")
+      expect(unborn.head).toBeNull()
+      expect(unborn.branches).toEqual([])
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+      rmSync(empty, { recursive: true, force: true })
     }
   })
 
