@@ -14,18 +14,27 @@ inspection:
 - Multi-branch history, loaded in pages of 50 commits with a **Load more** button.
 - Local and remote branch labels, combined when they have the same name and
   point to the same commit; the checked-out branch is indicated.
-- Branches containing the selected commit, with colors linked to visible graph
-  lanes.
-- SVG commit graph with lanes and merge edges.
+- Branches containing the selected commit, with colors linked to a stable
+  per-branch palette rather than graph lanes.
+- SVG commit graph whose nodes and line segments follow the branch color, so a
+  feature branch stays visually distinct from `main` even on a linear history.
+- Classic side-branch layout: a merged branch leaves the main line, runs beside
+  it, and visibly rejoins at the fork point.
+- Merge commits use an outer ring, dashed merge links, and an arrow into the
+  merged branch.
+- Branch tips are shown as colored pills directly on the commit rows.
 - Select a commit to view its author, date, hash, parents, and the files it
   changed.
 - Changed files show their status (added, modified, deleted, renamed, copied,
   type change), rename source, additions and deletions, and a binary marker.
 - Click a changed file to open its unified diff against the first parent, with
   colored additions, deletions, and hunk headers.
-- Manually refresh repository data.
+- **Refresh** repository data manually, or click **Fetch all** to fetch from all
+  configured remotes and then refresh the graph and branch list.
 
-This phase is read-only; it exposes no destructive Git commands.
+Git inspection is read-only. The explicit **Fetch all** action contacts configured
+remotes and updates remote-tracking refs, but does not prune refs or change the
+checked-out branch or working tree. No destructive Git commands are exposed.
 
 ## Documentation
 
@@ -52,6 +61,7 @@ This phase is read-only; it exposes no destructive Git commands.
 | Portable RPC schemas | `Schema.toStandardSchemaV1` from `effect` |
 | GUI bundle | `gui()` preset from `@opencode/plugin/gui/vite` |
 | History / branches | Git CLI via `node:child_process.spawn`, with the shell disabled |
+| Fetch all remotes | `git fetch --all` through typed `fetchAll` RPC, only on button click |
 | Commit files | `git diff-tree` name-status and numstat against the first parent, with rename detection |
 | File diff | `git diff` against the first parent, or `git show` for root commits, rendered as a colored unified patch |
 | Graph | Pure lane-layout algorithm in `src/graph/layout.ts`, rendered as SVG |
@@ -125,6 +135,12 @@ npm run build
 npm run check
 ```
 
+GitHub Actions runs `npm run check` on pushes to `main`, on pull requests that
+target `main` and are opened, updated, or reopened, and on manual workflow
+dispatch. Pushes to feature branches do not start a separate run: the same commit
+is already checked once by its pull request. The workflow uses Node.js 22.12 and
+`npm ci`; it covers typecheck, lint, tests, and the production build.
+
 ## Local installation
 
 1. Build the GUI bundle:
@@ -157,12 +173,14 @@ npm run check
 - The tab remains `pinned` to ensure visibility during this phase. It is planned
   to become a closable tab opened from a launcher in a later GUI phase.
 
-## Git read security and limits
+## Git command security and limits
 
-- Read-only commands use `spawn("git", args)` with `shell: false`; paths are
-  never interpolated into shell commands.
-- The repository path must be absolute. Each command has a 10-second timeout
-  and stdout is limited to 4 MiB.
+- Git commands use `spawn("git", args)` with `shell: false`; paths are never
+  interpolated into shell commands. Fetch arguments are fixed by the server and
+  cannot be supplied by the GUI.
+- The repository path must be absolute. Read commands have a 10-second timeout;
+  user-requested fetch has a 120-second timeout. Captured stdout is limited to
+  4 MiB.
 - Each history request is capped at 100 commits and offset 10,000.
 - Each commit file request returns at most 500 files; the RPC response includes
   a `truncated` flag when the commit has more.
@@ -171,9 +189,10 @@ npm run check
 - Merge commits are compared against their first parent, so the list shows what
   the merge brought in relative to the previous commit on the branch.
 - Commits are read from all visible refs (`git log --all`), so remote branches
-  must already have been fetched locally.
-- Actions such as checkout, reset, cherry-pick, and deletion are out of scope
-  for this phase.
+  must already have been fetched locally. Use **Fetch all** to update configured
+  remotes.
+- Fetch does not prune stale refs. Checkout, reset, cherry-pick, push, pull, and
+  deletion remain out of scope.
 
 ## Project structure
 
@@ -185,17 +204,20 @@ src/
 ├── index.ts          # server plugin: RPC registration
 ├── rpc.ts            # typed RPC contract (ping, history, branches)
 ├── git/
-│   └── reader.ts     # read-only Git commands and parsing
+│   └── reader.ts     # Git commands, history reading, and parsing
 ├── graph/
 │   └── layout.ts     # graph lane and edge layout
 ├── gui.tsx           # GUI entry: Panel, MenuItem, Command
 ├── gui/
+│   ├── branch-pill.tsx # shared branch reference badge
+│   ├── colors.ts     # lane palette and stable branch colors
 │   └── panel.tsx     # SolidJS panel, pagination, and SVG graph
 ├── shared/
 │   ├── branches.ts   # combine matching local and remote refs
 │   └── ids.ts        # plugin and panel ids
 └── tests/
     ├── branches.test.ts
+    ├── colors.test.ts
     ├── git-reader.test.ts
     ├── graph-layout.test.ts
     └── ids.test.ts

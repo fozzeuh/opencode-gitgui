@@ -16,7 +16,11 @@ describe("commit graph layout", () => {
     const graph = layoutGraph([commit("c", ["b"]), commit("b", ["a"]), commit("a")])
 
     expect(graph.map((row) => row.lane)).toEqual([0, 0, 0])
-    expect(graph[0]?.edges).toEqual([{ parent: "b", fromLane: 0, toLane: 0 }])
+    expect(graph.map((row) => row.laneStart)).toEqual([true, false, false])
+    expect(graph.map((row) => row.merge)).toEqual([false, false, false])
+    expect(graph[0]?.edges).toEqual([
+      { parent: "b", parentIndex: 0, merge: false, fromLane: 0, toLane: 0 },
+    ])
   })
 
   it("splits merge parents into distinct lanes", () => {
@@ -28,14 +32,44 @@ describe("commit graph layout", () => {
     ])
 
     expect(graph.map((row) => row.lane)).toEqual([0, 0, 1, 0])
+    expect(graph.map((row) => row.laneStart)).toEqual([true, false, false, false])
+    expect(graph.map((row) => row.merge)).toEqual([true, false, false, false])
     expect(graph[0]?.edges).toEqual([
-      { parent: "left", fromLane: 0, toLane: 0 },
-      { parent: "right", fromLane: 0, toLane: 1 },
+      { parent: "left", parentIndex: 0, merge: false, fromLane: 0, toLane: 0 },
+      { parent: "right", parentIndex: 1, merge: true, fromLane: 0, toLane: 1 },
     ])
-    expect(graph[2]?.edges).toEqual([{ parent: "base", fromLane: 1, toLane: 0 }])
+    expect(graph[2]?.edges).toEqual([
+      { parent: "base", parentIndex: 0, merge: false, fromLane: 1, toLane: 0 },
+    ])
   })
 
   it("omits edges to commits outside the loaded page", () => {
     expect(layoutGraph([commit("new", ["older"])])[0]?.edges).toEqual([])
+  })
+
+  it("keeps the main line in its lane when a side branch was read first", () => {
+    // Same order as `git log --all --topo-order` for a merged feature branch:
+    // the feature commits are emitted before the main-line commit that shares
+    // their fork point.
+    const graph = layoutGraph([
+      commit("merge", ["main", "feature"]),
+      commit("feature", ["feature-base"]),
+      commit("feature-base", ["base"]),
+      commit("main", ["base"]),
+      commit("base"),
+    ])
+
+    expect(graph.map((row) => row.lane)).toEqual([0, 1, 1, 0, 0])
+    expect(graph.map((row) => row.laneStart)).toEqual([true, false, false, false, false])
+    expect(graph[0]?.edges).toEqual([
+      { parent: "main", parentIndex: 0, merge: false, fromLane: 0, toLane: 0 },
+      { parent: "feature", parentIndex: 1, merge: true, fromLane: 0, toLane: 1 },
+    ])
+    expect(graph[2]?.edges).toEqual([
+      { parent: "base", parentIndex: 0, merge: false, fromLane: 1, toLane: 0 },
+    ])
+    expect(graph[3]?.edges).toEqual([
+      { parent: "base", parentIndex: 0, merge: false, fromLane: 0, toLane: 0 },
+    ])
   })
 })

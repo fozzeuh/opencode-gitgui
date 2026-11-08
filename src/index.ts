@@ -4,6 +4,7 @@ import {
   readBranchesContaining,
   readCommitFileDiff,
   readCommitFiles,
+  fetchAll,
   readHistory,
 } from "./git/reader"
 import { GitGraphRpc } from "./rpc"
@@ -22,6 +23,10 @@ export default Plugin.define({
       history: async (input, call) =>
         readHistory(input.directory, input.limit, input.offset, call.signal),
       branches: async (input, call) => readBranches(input.directory, call.signal),
+      fetchAll: async (input, call) => {
+        await fetchAll(input.directory, call.signal)
+        return { ok: true }
+      },
       branchesContaining: async (input, call) =>
         readBranchesContaining(input.directory, input.hash, call.signal),
       commitFiles: async (input, call) =>

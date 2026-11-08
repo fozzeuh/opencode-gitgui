@@ -5,11 +5,20 @@ import type { GitBranch, GitCommit, GitFileChange, GitFileStatus } from "../git/
 import { layoutGraph } from "../graph/layout"
 import { GitGraphRpc } from "../rpc"
 import { combineBranchRefs, countLogicalBranches, type BranchLabel } from "../shared/branches"
+import { BranchPill } from "./branch-pill"
+import {
+  assignGraphColors,
+  branchColorMap,
+  colorIndex,
+  edgeColorKey,
+  fallbackBranchColor,
+  GRAPH_COLORS,
+  laneColor,
+} from "./colors"
 
 const PAGE_SIZE = 50
 const ROW_HEIGHT = 50
 const LANE_WIDTH = 14
-const GRAPH_COLORS = ["#78a9ff", "#42be65", "#ff7eb6", "#be95ff", "#f1c21b", "#33b1ff"]
 const FILE_STATUS_LABELS: Record<GitFileStatus, string> = {
   added: "A",
   modified: "M",
@@ -40,6 +49,9 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
   const [offset, setOffset] = createSignal(0)
   const [hasMore, setHasMore] = createSignal(false)
   const [loading, setLoading] = createSignal(true)
+  const [fetching, setFetching] = createSignal(false)
+  const [fetchMessage, setFetchMessage] = createSignal("")
+  const [fetchError, setFetchError] = createSignal("")
   const [loadingMore, setLoadingMore] = createSignal(false)
   const [loadingContainingBranches, setLoadingContainingBranches] = createSignal(false)
   const [containingBranchesError, setContainingBranchesError] = createSignal("")
@@ -64,18 +76,35 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
   const graph = createMemo(() => layoutGraph(commits()))
   const laneCount = createMemo(() => Math.max(1, ...graph().map((row) => row.lane + 1)))
   const graphWidth = createMemo(() => 16 + laneCount() * LANE_WIDTH)
-  const laneByHash = createMemo(() => new Map(graph().map((row) => [row.hash, row.lane])))
   const branchLabels = createMemo(() => combineBranchRefs(branches()))
   const containingBranchLabels = createMemo(() => combineBranchRefs(containingBranches()))
-  const branchOrder = createMemo(() => new Map(branchLabels().map((branch, index) => [branch.name, index])))
+  const branchColors = createMemo(() => branchColorMap(branchLabels().map((branch) => branch.name)))
+  const branchesByHash = createMemo(() => {
+    const groups = new Map<string, BranchLabel[]>()
+    for (const branch of branchLabels()) {
+      const list = groups.get(branch.hash)
+      if (list) list.push(branch)
+      else groups.set(branch.hash, [branch])
+    }
+    return groups
+  })
   const branchCount = createMemo(() => countLogicalBranches(branches()))
   const indexByHash = createMemo(() => new Map(commits().map((commit, index) => [commit.hash, index])))
   const selectedCommit = createMemo(() => commits().find((commit) => commit.hash === selected()))
   const selectedIndex = createMemo(() => commits().findIndex((commit) => commit.hash === selected()))
   const rowTop = (index: number) => index * ROW_HEIGHT + (selectedIndex() >= 0 && selectedIndex() < index ? detailHeight() : 0)
-  const colorForLane = (lane: number) => GRAPH_COLORS[lane % GRAPH_COLORS.length]
   const colorForBranch = (branch: BranchLabel) =>
-    colorForLane(laneByHash().get(branch.hash) ?? branchOrder().get(branch.name) ?? 0)
+    branchColors().get(branch.name) ?? fallbackBranchColor(branch.name)
+  const branchColorByHash = createMemo(() => {
+    const colors = new Map<string, string>()
+    for (const branch of branchLabels()) {
+      if (!colors.has(branch.hash)) colors.set(branch.hash, colorForBranch(branch))
+    }
+    return colors
+  })
+  const graphColors = createMemo(() =>
+    assignGraphColors(graph(), branchColorByHash(), laneColor),
+  )
   const fileStats = createMemo(() => {
     let additions = 0
     let deletions = 0
@@ -122,6 +151,23 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
       if (request === generation) setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       if (request === generation) setLoading(false)
+    }
+  }
+
+  async function fetchAll() {
+    if (fetching()) return
+    const directory = props.session.directory
+    setFetching(true)
+    setFetchMessage("")
+    setFetchError("")
+    try {
+      await ctx.client.rpc(GitGraphRpc).fetchAll({ directory })
+      setFetchMessage(ctx.t("panel.fetchComplete"))
+      await refresh(directory)
+    } catch (cause) {
+      setFetchError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setFetching(false)
     }
   }
 
@@ -325,7 +371,26 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
         <ctx.ui.Button icon="refresh" size="small" busy={loading()} onClick={() => void refresh(props.session.directory)}>
           {ctx.t("panel.refresh")}
         </ctx.ui.Button>
+        <ctx.ui.Button size="small" busy={fetching()} onClick={() => void fetchAll()}>
+          {ctx.t("panel.fetchAll")}
+        </ctx.ui.Button>
       </header>
+
+      <Show when={fetchError()}>
+        <div role="alert" style={{ "font-size": "11px", "line-height": 1.5, color: "#da1e28" }}>
+          {ctx.t("panel.fetchError")}: {fetchError()}
+        </div>
+      </Show>
+      <Show when={fetching()}>
+        <div role="status" style={{ "font-size": "11px", "line-height": 1.5, opacity: 0.7 }}>
+          {ctx.t("panel.fetching")}
+        </div>
+      </Show>
+      <Show when={fetchMessage() && !fetching()}>
+        <div role="status" style={{ "font-size": "11px", "line-height": 1.5, color: "#42be65" }}>
+          {fetchMessage()}
+        </div>
+      </Show>
 
       <section style={{ display: "flex", "flex-direction": "column", gap: "5px" }}>
         <span style={{ "font-size": "11px", opacity: 0.65 }}>{ctx.t("panel.repository")}</span>
@@ -354,32 +419,14 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
           <div style={{ display: "flex", gap: "5px", "flex-wrap": "wrap" }}>
             <For each={branchLabels().slice(0, 8)}>
               {(branch) => (
-                <span
-                  title={`${branch.name}${branch.remotes.length ? ` · ${branch.remotes.join(", ")}` : ""} · ${shortHash(branch.hash)}`}
-                  style={{
-                    padding: "2px 6px",
-                    "border-radius": "4px",
-                    "font-size": "10px",
-                    opacity: branch.current ? 1 : 0.65,
-                    outline: branch.current ? "1px solid currentColor" : "none",
-                  }}
-                >
-                  <span
-                    aria-hidden="true"
-                    style={{
-                      display: "inline-block",
-                      width: "7px",
-                      height: "7px",
-                      "margin-right": "4px",
-                      "border-radius": "50%",
-                      background: colorForBranch(branch),
-                    }}
-                  />
-                  {branch.name}
-                  <Show when={branch.remotes.length > 0}>
-                    <span style={{ "margin-left": "4px", opacity: 0.65 }}>{branch.remotes.join(", ")}</span>
-                  </Show>
-                </span>
+                <BranchPill
+                  name={branch.name}
+                  remotes={branch.remotes}
+                  hash={branch.hash}
+                  color={colorForBranch(branch)}
+                  current={branch.current}
+                  muted={!branch.current}
+                />
               )}
             </For>
             <Show when={branchLabels().length > 8}>
@@ -405,6 +452,24 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
               aria-hidden="true"
               style={{ overflow: "visible" }}
             >
+              <defs>
+                <For each={GRAPH_COLORS}>
+                  {(color, colorIndex) => (
+                    <marker
+                      id={`git-graph-merge-${colorIndex()}`}
+                      viewBox="0 0 7 7"
+                      refX="7"
+                      refY="3.5"
+                      markerWidth="7"
+                      markerHeight="7"
+                      markerUnits="userSpaceOnUse"
+                      orient="auto"
+                    >
+                      <path d="M 0 0 L 7 3.5 L 0 7 Z" fill={color} />
+                    </marker>
+                  )}
+                </For>
+              </defs>
               <For each={graph()}>
                 {(row, index) => {
                   const y = rowTop(index()) + ROW_HEIGHT / 2
@@ -418,17 +483,46 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
                           const parentY = rowTop(parentIndex) + ROW_HEIGHT / 2
                           const parentX = 8 + edge.toLane * LANE_WIDTH
                           const middle = (y + parentY) / 2
+                          const color =
+                            graphColors().edges.get(edgeColorKey(row.hash, edge.parent)) ??
+                            laneColor(edge.merge ? edge.toLane : edge.fromLane)
+                          // Stop merge arrows just above the parent node so the node does not hide them.
+                          const endY = edge.merge ? parentY - 6 : parentY
                           return (
                             <path
-                              d={`M ${x} ${y} C ${x} ${middle}, ${parentX} ${middle}, ${parentX} ${parentY}`}
+                              d={`M ${x} ${y} C ${x} ${middle}, ${parentX} ${middle}, ${parentX} ${endY}`}
                               fill="none"
-                              stroke={colorForLane(edge.fromLane)}
-                              stroke-width="2"
+                              stroke={color}
+                              stroke-width={edge.merge ? 1.75 : 2}
+                              stroke-dasharray={edge.merge ? "5 3" : undefined}
+                              marker-end={
+                                edge.merge ? `url(#git-graph-merge-${colorIndex(color)})` : undefined
+                              }
                             />
                           )
                         }}
                       </For>
-                      <circle cx={x} cy={y} r={4} fill={colorForLane(row.lane)} stroke="currentColor" stroke-width="1" />
+                      <circle
+                        cx={x}
+                        cy={y}
+                        r={4}
+                        fill={graphColors().rows.get(row.hash) ?? laneColor(row.lane)}
+                        stroke="currentColor"
+                        stroke-width="1"
+                      />
+                      <Show when={row.merge}>
+                        <circle
+                          cx={x}
+                          cy={y}
+                          r={7.5}
+                          fill="none"
+                          stroke={graphColors().rows.get(row.hash) ?? laneColor(row.lane)}
+                          stroke-width="1.5"
+                          opacity="0.85"
+                        >
+                          <title>{ctx.t("panel.mergeCommit")}</title>
+                        </circle>
+                      </Show>
                     </>
                   )
                 }}
@@ -466,11 +560,37 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
                         >
                           {commit.subject || ctx.t("panel.noSubject")}
                         </span>
-                        <span style={{ display: "flex", gap: "6px", "font-size": "10px", opacity: 0.62, "white-space": "nowrap", overflow: "hidden" }}>
-                          <code>{shortHash(commit.hash)}</code>
-                          <span style={{ "text-overflow": "ellipsis", overflow: "hidden" }}>{commit.author}</span>
-                          <Show when={commit.decorations}>
-                            <span title={commit.decorations} style={{ opacity: 0.9 }}>{commit.decorations}</span>
+                        <span style={{ display: "flex", "align-items": "center", gap: "5px", "font-size": "10px", "white-space": "nowrap", overflow: "hidden" }}>
+                          <code style={{ opacity: 0.62 }}>{shortHash(commit.hash)}</code>
+                          <Show when={commit.parents.length > 1}>
+                            <span
+                              title={ctx.t("panel.mergeCommit")}
+                              style={{
+                                padding: "0 4px",
+                                "border-radius": "3px",
+                                "background-color": "rgba(127, 127, 127, 0.20)",
+                                "font-size": "9px",
+                                "line-height": "14px",
+                                opacity: 0.8,
+                              }}
+                            >
+                              {ctx.t("panel.merge")}
+                            </span>
+                          </Show>
+                          <span style={{ opacity: 0.62, "text-overflow": "ellipsis", overflow: "hidden" }}>{commit.author}</span>
+                          <For each={branchesByHash().get(commit.hash) ?? []}>
+                            {(branch) => (
+                              <BranchPill
+                                name={branch.name}
+                                remotes={branch.remotes}
+                                color={colorForBranch(branch)}
+                                current={branch.current}
+                                compact
+                              />
+                            )}
+                          </For>
+                          <Show when={(branchesByHash().get(commit.hash) ?? []).length === 0 && commit.decorations}>
+                            <span title={commit.decorations} style={{ opacity: 0.72 }}>{commit.decorations}</span>
                           </Show>
                         </span>
                       </div>
@@ -739,32 +859,14 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
                                 <div style={{ display: "flex", gap: "6px", "flex-wrap": "wrap" }}>
                                   <For each={containingBranchLabels()}>
                                     {(branch) => (
-                                      <span
-                                        title={`${branch.name}${branch.remotes.length ? ` · ${branch.remotes.join(", ")}` : ""} · ${shortHash(branch.hash)}`}
-                                        style={{
-                                          display: "inline-flex",
-                                          "align-items": "center",
-                                          gap: "5px",
-                                          padding: "3px 7px",
-                                          "border-radius": "4px",
-                                          "background-color": "rgba(127, 127, 127, 0.14)",
-                                          "font-size": "12px",
-                                        }}
-                                      >
-                                        <span
-                                          aria-hidden="true"
-                                          style={{
-                                            width: "8px",
-                                            height: "8px",
-                                            "border-radius": "50%",
-                                            background: colorForBranch(branch),
-                                          }}
-                                        />
-                                        {branch.name}
-                                        <Show when={branch.remotes.length > 0}>
-                                          <span style={{ opacity: 0.65 }}>{branch.remotes.join(", ")}</span>
-                                        </Show>
-                                      </span>
+                                      <BranchPill
+                                        name={branch.name}
+                                        remotes={branch.remotes}
+                                        hash={branch.hash}
+                                        color={colorForBranch(branch)}
+                                        current={branch.current}
+                                        muted={!branch.current}
+                                      />
                                     )}
                                   </For>
                                 </div>
