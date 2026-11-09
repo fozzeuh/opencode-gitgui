@@ -397,6 +397,54 @@ commands.
   reset modes.
 - The suite now has 55 tests and `npm run check` passes.
 
+## Git actions — panel controls and confirmations — 2026-11-09
+
+Goal: make the new server actions usable from the panel, with the confirmation
+rules from the brief.
+
+### Working tree status
+
+- The panel now shows whether the working tree is clean, how many entries are
+  uncommitted, how many are conflicted, and whether a merge, cherry-pick,
+  revert, or rebase is still in progress. The line turns red for conflicts and
+  amber for an in-progress operation.
+- Status and the configured remote list are fetched with the history, branches,
+  and tags on every refresh.
+
+### Actions menu
+
+- New **Actions** menu in the header with **Push**, **Pull**, and
+  **Checkout branch…**.
+- **Checkout branch…** uses the app's searchable select dialog, lists only local
+  branches other than the current one, then asks for confirmation. When the
+  working tree is dirty, the confirmation explains the risk and uses the
+  destructive style.
+- **Push** refuses to run in detached HEAD state or without a configured
+  remote, lets the user pick a remote when there is more than one, and shows the
+  branch and remote in the confirmation.
+- **Pull** asks for confirmation and states that it is fast-forward only.
+
+### Commit actions
+
+- The commit detail card adds **Checkout commit**, **Cherry-pick**, **Revert**,
+  and **Reset** buttons.
+- **Checkout commit** warns that it detaches HEAD.
+- **Cherry-pick** and **Revert** show the commit subject in their confirmation.
+- **Reset** first asks for the mode (soft, mixed, hard) in a select dialog with
+  the effect of each mode, then asks for confirmation showing the current
+  branch, the target commit, and its subject. **Hard** uses a destructive
+  confirmation and a stronger warning that uncommitted changes are discarded.
+- Every action shows a busy state on its button, disables the other action
+  controls while it runs, reports Git errors instead of hiding them, and
+  refreshes history, branches, tags, status, and remotes on success.
+- On failure the panel refreshes the status too, so a cherry-pick or revert
+  conflict appears immediately with its conflict count and in-progress marker.
+
+### Documentation
+
+- README now documents the action controls, their confirmations, and the
+  remaining write limitations.
+
 ## Current status against the original brief
 
 | Original feature | Status |
@@ -411,14 +459,14 @@ commands.
 | File diffs with syntax highlighting | Done: unified diff viewer with line colors and per-line syntax highlighting for common languages |
 | Search by message or hash | Done: full history, server-side, combines with branch filter |
 | Filter by branch | Done: local and remote branches |
-| Git actions (checkout, cherry-pick, revert, reset, push, fetch, pull) | Partial: explicit Fetch all updates configured remotes; other actions not yet |
-| Confirmation flows for destructive actions | Not yet |
+| Git actions (checkout, cherry-pick, revert, reset, push, fetch, pull) | Done: branch and commit checkout, cherry-pick, revert, soft/mixed/hard reset, push to a configured remote, fetch, and fast-forward pull |
+| Confirmation flows for destructive actions | Done: every write action confirms; dirty checkout and detached checkout use a destructive confirmation; reset hard adds a select step and a stronger warning |
 | Closable tab and launcher | Not yet; tab is pinned |
 
 ## Next steps
 
-1. Action layer with explicit confirmation for destructive operations.
-2. Closable tab driven by a launcher.
-3. Error and conflict handling hardening.
-4. Remaining integration tests for empty repositories, tags, conflicts, local
-   changes, and command failures.
+1. Closable tab driven by a launcher.
+2. Error and conflict handling hardening: explicit abort/continue for a
+   cherry-pick or revert left in progress, and clearer conflict guidance.
+3. Remaining integration tests for empty repositories, multi-parent merges,
+   orphaned commits, large histories, and command failures.

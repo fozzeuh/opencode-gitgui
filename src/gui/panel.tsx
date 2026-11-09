@@ -1,6 +1,7 @@
-import type { MountedSession } from "@opencode/plugin/gui"
+import type { MountedSession, UiMenuEntry } from "@opencode/plugin/gui"
 import { usePlugin } from "@opencode/plugin/gui"
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js"
+import type { GitOperation, GitStatus, ResetMode } from "../git/actions"
 import type { GitBranch, GitCommit, GitFileChange, GitFileStatus, GitTag } from "../git/reader"
 import { layoutGraph } from "../graph/layout"
 import { edgePath } from "../graph/render"
@@ -43,6 +44,16 @@ const FILE_STATUS_COLORS: Record<GitFileStatus, string> = {
   copied: "#33b1ff",
   "type-changed": "#f1c21b",
   unknown: "#8d8d8d",
+}
+const RESET_LABEL_KEYS: Record<ResetMode, string> = {
+  soft: "panel.resetSoft",
+  mixed: "panel.resetMixed",
+  hard: "panel.resetHard",
+}
+const RESET_DESCRIPTION_KEYS: Record<ResetMode, string> = {
+  soft: "panel.resetSoftDescription",
+  mixed: "panel.resetMixedDescription",
+  hard: "panel.resetHardDescription",
 }
 const TOKEN_COLORS: Record<TokenKind, string | undefined> = {
   plain: undefined,
@@ -94,6 +105,11 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
   const [fetching, setFetching] = createSignal(false)
   const [fetchMessage, setFetchMessage] = createSignal("")
   const [fetchError, setFetchError] = createSignal("")
+  const [status, setStatus] = createSignal<GitStatus | null>(null)
+  const [remotes, setRemotes] = createSignal<string[]>([])
+  const [actionBusy, setActionBusy] = createSignal<string | null>(null)
+  const [actionMessage, setActionMessage] = createSignal("")
+  const [actionError, setActionError] = createSignal("")
   const [loadingMore, setLoadingMore] = createSignal(false)
   const [loadingContainingBranches, setLoadingContainingBranches] = createSignal(false)
   const [containingBranchesError, setContainingBranchesError] = createSignal("")
@@ -150,6 +166,26 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
       onSelect: () => chooseBranch(branch.name),
     })),
   ])
+  const localBranches = createMemo(() => branches().filter((branch) => !branch.remote))
+  const otherLocalBranches = createMemo(() => localBranches().filter((branch) => !branch.current))
+  const actionItems = createMemo<UiMenuEntry[]>(() => [
+    {
+      label: ctx.t("panel.push"),
+      disabled: !currentBranch() || remotes().length === 0,
+      onSelect: () => void pushAction(),
+    },
+    {
+      label: ctx.t("panel.pull"),
+      disabled: !currentBranch(),
+      onSelect: () => void pullAction(),
+    },
+    { type: "separator" },
+    {
+      label: ctx.t("panel.checkoutBranchAction"),
+      disabled: otherLocalBranches().length === 0,
+      onSelect: () => void chooseCheckoutBranch(),
+    },
+  ])
   const indexByHash = createMemo(() => new Map(commits().map((commit, index) => [commit.hash, index])))
   const selectedCommit = createMemo(() => commits().find((commit) => commit.hash === selected()))
   const selectedIndex = createMemo(() => commits().findIndex((commit) => commit.hash === selected()))
@@ -199,10 +235,12 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
       const client = ctx.client.rpc(GitGraphRpc)
       const query = appliedQuery()
       const branch = branchFilter()
-      const [history, branchInfo, tagInfo] = await Promise.all([
+      const [history, branchInfo, tagInfo, statusInfo, remoteInfo] = await Promise.all([
         client.history({ directory, limit: INITIAL_PAGE_SIZE, offset: 0, query, branch }),
         client.branches({ directory }),
         client.tags({ directory }),
+        client.status({ directory }),
+        client.remotes({ directory }),
       ])
       if (request !== generation) return
       setRoot(history.root)
@@ -211,6 +249,8 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
       setCurrentBranch(branchInfo.current)
       setHeadHash(branchInfo.head)
       setTags([...tagInfo.tags])
+      setStatus(statusInfo)
+      setRemotes([...remoteInfo.remotes])
       setOffset(history.commits.length)
       setHasMore(history.commits.length === INITIAL_PAGE_SIZE)
     } catch (cause) {
@@ -235,6 +275,210 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
     } finally {
       setFetching(false)
     }
+  }
+
+  function operationLabel(operation: GitOperation): string {
+    switch (operation) {
+      case "merge":
+        return ctx.t("panel.inProgressMerge")
+      case "cherry-pick":
+        return ctx.t("panel.inProgressCherryPick")
+      case "revert":
+        return ctx.t("panel.inProgressRevert")
+      case "rebase":
+        return ctx.t("panel.inProgressRebase")
+    }
+  }
+
+  async function refreshStatus() {
+    await ctx.client.rpc(GitGraphRpc)
+      .status({ directory: props.session.directory })
+      .then(setStatus)
+      .catch(() => undefined)
+  }
+
+  async function runAction(id: string, message: string, action: () => Promise<void>) {
+    if (actionBusy()) return
+    setActionBusy(id)
+    setActionMessage("")
+    setActionError("")
+    try {
+      await action()
+      setActionMessage(message)
+      await refresh(props.session.directory)
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : String(cause))
+      await refreshStatus()
+    } finally {
+      setActionBusy(null)
+    }
+  }
+
+  async function checkoutBranchAction(name: string) {
+    const current = status()
+    const dirty = current ? !current.clean : false
+    const confirmed = await ctx.dialogs.confirm({
+      title: `${ctx.t("panel.checkoutBranchAction")} ${name}`,
+      description: dirty ? ctx.t("panel.checkoutDirty") : ctx.t("panel.checkoutDescription"),
+      confirm: ctx.t("panel.checkout"),
+      danger: dirty,
+    })
+    if (!confirmed) return
+    await runAction("checkout-branch", `${ctx.t("panel.checkout")} ${name}`, async () => {
+      await ctx.client.rpc(GitGraphRpc).checkoutBranch({
+        directory: props.session.directory,
+        branch: name,
+      })
+    })
+  }
+
+  async function chooseCheckoutBranch() {
+    const options = otherLocalBranches().map((branch) => ({
+      title: branch.name,
+      value: branch.name,
+    }))
+    if (options.length === 0) {
+      await ctx.dialogs.alert({
+        title: ctx.t("panel.checkoutBranchAction"),
+        description: ctx.t("panel.noLocalBranches"),
+      })
+      return
+    }
+    const branch = await ctx.dialogs.select({
+      title: ctx.t("panel.checkoutBranchAction"),
+      options,
+    })
+    if (branch) await checkoutBranchAction(branch)
+  }
+
+  async function checkoutCommitAction(commit: GitCommit) {
+    const confirmed = await ctx.dialogs.confirm({
+      title: `${ctx.t("panel.checkoutCommit")} ${shortHash(commit.hash)}`,
+      description: `${commit.subject}\n${ctx.t("panel.checkoutCommitDescription")}`,
+      confirm: ctx.t("panel.checkout"),
+      danger: true,
+    })
+    if (!confirmed) return
+    await runAction("checkout-commit", `${ctx.t("panel.checkout")} ${shortHash(commit.hash)}`, async () => {
+      await ctx.client.rpc(GitGraphRpc).checkoutCommit({
+        directory: props.session.directory,
+        hash: commit.hash,
+      })
+    })
+  }
+
+  async function cherryPickAction(commit: GitCommit) {
+    const confirmed = await ctx.dialogs.confirm({
+      title: `${ctx.t("panel.cherryPick")} ${shortHash(commit.hash)}`,
+      description: `${commit.subject}\n${ctx.t("panel.cherryPickDescription")}`,
+      confirm: ctx.t("panel.cherryPick"),
+    })
+    if (!confirmed) return
+    await runAction("cherry-pick", `${ctx.t("panel.cherryPick")} ${shortHash(commit.hash)}`, async () => {
+      await ctx.client.rpc(GitGraphRpc).cherryPick({
+        directory: props.session.directory,
+        hash: commit.hash,
+      })
+    })
+  }
+
+  async function revertAction(commit: GitCommit) {
+    const confirmed = await ctx.dialogs.confirm({
+      title: `${ctx.t("panel.revert")} ${shortHash(commit.hash)}`,
+      description: `${commit.subject}\n${ctx.t("panel.revertDescription")}`,
+      confirm: ctx.t("panel.revert"),
+    })
+    if (!confirmed) return
+    await runAction("revert", `${ctx.t("panel.revert")} ${shortHash(commit.hash)}`, async () => {
+      await ctx.client.rpc(GitGraphRpc).revert({
+        directory: props.session.directory,
+        hash: commit.hash,
+      })
+    })
+  }
+
+  async function resetAction(commit: GitCommit) {
+    const modes = Object.keys(RESET_LABEL_KEYS) as ResetMode[]
+    const mode = await ctx.dialogs.select<ResetMode>({
+      title: ctx.t("panel.resetTitle"),
+      options: modes.map((value) => ({
+        title: ctx.t(RESET_LABEL_KEYS[value]),
+        value,
+        description: ctx.t(RESET_DESCRIPTION_KEYS[value]),
+      })),
+    })
+    if (!mode) return
+    const hard = mode === "hard"
+    const branch = status()?.branch ?? ctx.t("panel.detached")
+    const confirmed = await ctx.dialogs.confirm({
+      title: `${ctx.t("panel.reset")} ${ctx.t(RESET_LABEL_KEYS[mode])}`,
+      description: `${branch} → ${shortHash(commit.hash)} ${commit.subject}\n${
+        hard ? ctx.t("panel.resetHardWarning") : ctx.t(RESET_DESCRIPTION_KEYS[mode])
+      }`,
+      confirm: hard ? ctx.t("panel.resetHardConfirm") : ctx.t("panel.reset"),
+      danger: hard,
+    })
+    if (!confirmed) return
+    await runAction("reset", `${ctx.t("panel.reset")} ${ctx.t(RESET_LABEL_KEYS[mode])}`, async () => {
+      await ctx.client.rpc(GitGraphRpc).reset({
+        directory: props.session.directory,
+        hash: commit.hash,
+        mode,
+      })
+    })
+  }
+
+  async function pushAction() {
+    const branch = currentBranch()
+    if (!branch) {
+      await ctx.dialogs.alert({
+        title: ctx.t("panel.push"),
+        description: ctx.t("panel.pushNeedsBranch"),
+      })
+      return
+    }
+    const list = remotes()
+    if (list.length === 0) {
+      await ctx.dialogs.alert({
+        title: ctx.t("panel.push"),
+        description: ctx.t("panel.pushNoRemotes"),
+      })
+      return
+    }
+    const [first] = list
+    const remote =
+      first && list.length === 1
+        ? first
+        : await ctx.dialogs.select({
+            title: ctx.t("panel.pushSelectRemote"),
+            options: list.map((name) => ({ title: name, value: name })),
+          })
+    if (!remote) return
+    const confirmed = await ctx.dialogs.confirm({
+      title: ctx.t("panel.push"),
+      description: `${branch} → ${remote}\n${ctx.t("panel.pushDescription")}`,
+      confirm: ctx.t("panel.push"),
+    })
+    if (!confirmed) return
+    await runAction("push", `${ctx.t("panel.push")} ${branch} → ${remote}`, async () => {
+      await ctx.client.rpc(GitGraphRpc).push({
+        directory: props.session.directory,
+        remote,
+        branch,
+      })
+    })
+  }
+
+  async function pullAction() {
+    const confirmed = await ctx.dialogs.confirm({
+      title: ctx.t("panel.pull"),
+      description: `${currentBranch() ?? ctx.t("panel.detached")}\n${ctx.t("panel.pullDescription")}`,
+      confirm: ctx.t("panel.pull"),
+    })
+    if (!confirmed) return
+    await runAction("pull", ctx.t("panel.pull"), async () => {
+      await ctx.client.rpc(GitGraphRpc).pull({ directory: props.session.directory })
+    })
   }
 
   async function loadMore() {
@@ -444,6 +688,12 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
         <ctx.ui.Button size="small" busy={fetching()} onClick={() => void fetchAll()}>
           {ctx.t("panel.fetchAll")}
         </ctx.ui.Button>
+        <ctx.ui.Menu
+          trigger="button"
+          label={ctx.t("panel.actions")}
+          disabled={actionBusy() !== null}
+          items={actionItems()}
+        />
       </header>
 
       <section style={{ display: "flex", "flex-direction": "column", gap: "6px" }}>
@@ -492,6 +742,16 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
           {fetchMessage()}
         </div>
       </Show>
+      <Show when={actionError()}>
+        <div role="alert" style={{ "font-size": "11px", "line-height": 1.5, color: "#da1e28" }}>
+          {ctx.t("panel.actionFailed")}: {actionError()}
+        </div>
+      </Show>
+      <Show when={actionMessage() && actionBusy() === null}>
+        <div role="status" style={{ "font-size": "11px", "line-height": 1.5, color: "#42be65" }}>
+          {ctx.t("panel.actionComplete")}: {actionMessage()}
+        </div>
+      </Show>
 
       <section style={{ display: "flex", "flex-direction": "column", gap: "5px" }}>
         <span style={{ "font-size": "11px", opacity: 0.65 }}>{ctx.t("panel.repository")}</span>
@@ -520,6 +780,27 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
             </span>
             <span style={{ opacity: 0.6 }}>· {branchCount()} {ctx.t("panel.branches")}</span>
           </div>
+          <Show when={status()}>
+            {(current) => (
+              <div style={{ display: "flex", gap: "6px", "font-size": "11px", opacity: 0.8 }}>
+                <span style={{ color: current().conflicted > 0 ? "#da1e28" : undefined }}>
+                  {current().clean
+                    ? ctx.t("panel.workingTreeClean")
+                    : `${current().staged + current().unstaged + current().untracked + current().conflicted} ${ctx.t("panel.uncommittedChanges")}`}
+                </span>
+                <Show when={current().conflicted > 0}>
+                  <span style={{ color: "#da1e28" }}>
+                    · {current().conflicted} {ctx.t("panel.conflicts")}
+                  </span>
+                </Show>
+                <Show when={current().inProgress}>
+                  {(operation) => (
+                    <span style={{ color: "#f1c21b" }}>· {operationLabel(operation())}</span>
+                  )}
+                </Show>
+              </div>
+            )}
+          </Show>
           <div style={{ display: "flex", gap: "5px", "flex-wrap": "wrap" }}>
             <For each={branchLabels().slice(0, 8)}>
               {(branch) => (
@@ -763,6 +1044,40 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
                               {ctx.t("panel.parents")} {commit.parents.map(shortHash).join(", ")}
                             </span>
                           </Show>
+                          <div style={{ display: "flex", "flex-wrap": "wrap", gap: "6px" }}>
+                            <ctx.ui.Button
+                              size="small"
+                              disabled={actionBusy() !== null}
+                              busy={actionBusy() === "checkout-commit"}
+                              onClick={() => void checkoutCommitAction(commit)}
+                            >
+                              {ctx.t("panel.checkoutCommit")}
+                            </ctx.ui.Button>
+                            <ctx.ui.Button
+                              size="small"
+                              disabled={actionBusy() !== null}
+                              busy={actionBusy() === "cherry-pick"}
+                              onClick={() => void cherryPickAction(commit)}
+                            >
+                              {ctx.t("panel.cherryPick")}
+                            </ctx.ui.Button>
+                            <ctx.ui.Button
+                              size="small"
+                              disabled={actionBusy() !== null}
+                              busy={actionBusy() === "revert"}
+                              onClick={() => void revertAction(commit)}
+                            >
+                              {ctx.t("panel.revert")}
+                            </ctx.ui.Button>
+                            <ctx.ui.Button
+                              size="small"
+                              disabled={actionBusy() !== null}
+                              busy={actionBusy() === "reset"}
+                              onClick={() => void resetAction(commit)}
+                            >
+                              {ctx.t("panel.reset")}
+                            </ctx.ui.Button>
+                          </div>
                           <Show when={(tagsByHash().get(commit.hash) ?? []).length > 0}>
                             <span style={{ display: "flex", "align-items": "center", gap: "5px", "flex-wrap": "wrap" }}>
                               <strong>{ctx.t("panel.tags")}</strong>
