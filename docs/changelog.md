@@ -445,6 +445,24 @@ rules from the brief.
 - README now documents the action controls, their confirmations, and the
   remaining write limitations.
 
+## Closable panel tab — 2026-11-09
+
+Goal: stop pinning the tab and let the user open and close it like any other
+side panel tab.
+
+- The `PanelTab` is no longer `pinned` and is no longer `closable: false`. It
+  now uses the compact close button.
+- `Panel.list` receives the session's stored tab ids and returns the Git Graph
+  tab only while `git-graph:graph` is stored open. A closed tab therefore leaves
+  the strip instead of being re-added on every render.
+- The side panel `+` menu item and the command palette command
+  (`Git Graph: Open panel`, `mod+shift+g`) remain the launcher: both call
+  `ctx.layout.open`, which stores the tab and selects it.
+- `Panel.closed` returns the tab title so the host can offer it under
+  "Recently closed" and reopen it under the same key.
+- `fallback: true` is kept so the tab is selected when it is opened.
+- The narrow-screen `mobile` menu entry is unchanged.
+
 ## Current status against the original brief
 
 | Original feature | Status |
@@ -461,12 +479,11 @@ rules from the brief.
 | Filter by branch | Done: local and remote branches |
 | Git actions (checkout, cherry-pick, revert, reset, push, fetch, pull) | Done: branch and commit checkout, cherry-pick, revert, soft/mixed/hard reset, push to a configured remote, fetch, and fast-forward pull |
 | Confirmation flows for destructive actions | Done: every write action confirms; dirty checkout and detached checkout use a destructive confirmation; reset hard adds a select step and a stronger warning |
-| Closable tab and launcher | Not yet; tab is pinned |
+| Closable tab and launcher | Done: closable tab opened from the side panel menu or the command palette, with a compact close button and a recently-closed entry |
 
 ## Next steps
 
-1. Closable tab driven by a launcher.
-2. Error and conflict handling hardening: explicit abort/continue for a
+1. Error and conflict handling hardening: explicit abort/continue for a
    cherry-pick or revert left in progress, and clearer conflict guidance.
-3. Remaining integration tests for empty repositories, multi-parent merges,
+2. Remaining integration tests for empty repositories, multi-parent merges,
    orphaned commits, large histories, and command failures.

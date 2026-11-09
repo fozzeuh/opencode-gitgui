@@ -59,6 +59,9 @@ syntax-highlighted diffs and the confirmed Git action layer:
 - After an action, the graph, branches, tags, status, and remotes refresh. On
   failure the Git error is shown and the status refreshes too, so conflicts and
   in-progress operations are visible immediately.
+- The panel is a regular closable side tab. Open it from the side panel `+` menu
+  or the command palette; closing it removes it from the strip, and it can be
+  restored from the host's recently-closed list.
 
 History inspection is read-only. Write actions run only after an explicit user
 request, never in the background. Checkout warns first when the working tree is
@@ -83,7 +86,7 @@ prunes refs.
 | Side panel | `Panel` registry + `PanelTab` type |
 | Open the panel | `MenuItem` (`session.panel`) and `Command` |
 | Read the session | `ctx.sessions.current()` |
-| Open / inspect panel state | `ctx.layout.open()` / `ctx.layout.state()` |
+| Open / close a tab | `ctx.layout.open()` / `ctx.layout.state()`, `Panel.list({ open })`, `PanelTab.closable`, `Panel.closed` |
 | Component context | `usePlugin()` |
 | Native components | `ctx.ui.Icon`, `ctx.ui.Button` |
 | Translations | `ctx.t()` + `i18n` in `Plugin.define` |
@@ -195,10 +198,12 @@ is already checked once by its pull request. The workflow uses Node.js 22.12 and
    /Applications/OpenCode.app/Contents/Resources/opencode-cli plugin list
    ```
 
-3. Reload the OpenCode configuration, then open a session. The `Git Graph` tab
-   is pinned in the side panel. It is also available from:
+3. Reload the OpenCode configuration, then open a session. Open the `Git Graph`
+   tab from:
    - the side panel `+` menu;
    - the command palette (`Git Graph: Open panel`, `mod+shift+g`).
+
+   The tab is closable and is restored with the session when it was left open.
 
 ## Known integration limitations
 
@@ -208,10 +213,10 @@ is already checked once by its pull request. The workflow uses Node.js 22.12 and
   not sufficient.
 - If the server plugin fails to load, its GUI is unavailable.
 - The `opencode` namespace and built-in plugin ids are reserved.
-- Window `setup` is synchronous; asynchronous work belongs in a component,
+- Window `setup` is synchronous; asynchronous work belongs to a component,
   `createKeyed`, or `createLatest`.
-- The tab remains `pinned` to ensure visibility during this phase. It is planned
-  to become a closable tab opened from a launcher in a later GUI phase.
+- The tab is listed only while the session stores it open. If a session never
+  opened it, use the side panel `+` menu or the command palette.
 
 ## Git command security and limits
 

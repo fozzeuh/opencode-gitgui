@@ -99,15 +99,15 @@ export default Plugin.define({
     },
   },
   setup(ctx) {
-    // Pinned for phase 1 so the tab is visible as soon as a session is open.
-    // It becomes a closable launcher in the GUI phase.
+    // The tab is opened from the side panel menu or the command palette and
+    // can be closed again. `list` returns it only while the session stores it
+    // open, so a closed tab leaves the strip instead of staying pinned.
     const tab: PanelTab = {
       id: PANEL_ID,
       get title() {
         return ctx.t("panel.title")
       },
-      pinned: true,
-      closable: false,
+      closable: "compact",
       fallback: true,
     }
 
@@ -122,8 +122,9 @@ export default Plugin.define({
         kind: "menu",
         icon: "branch",
       },
-      list: () => [tab],
+      list: ({ open }) => (open.includes(PANEL_ID) ? [tab] : []),
       render: (props) => <GitGraphPanel session={props.session} />,
+      closed: () => ({ title: ctx.t("panel.title") }),
     })
 
     ctx.add(MenuItem, (): MenuItem => {
