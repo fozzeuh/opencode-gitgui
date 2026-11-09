@@ -22,6 +22,11 @@ const Branch = Schema.Struct({
   current: Schema.Boolean,
 })
 
+const Tag = Schema.Struct({
+  name: Schema.String,
+  hash: Schema.String,
+})
+
 const FileChange = Schema.Struct({
   path: Schema.String,
   previousPath: Schema.NullOr(Schema.String),
@@ -64,6 +69,8 @@ export const GitGraphRpc = Rpc.define({
           directory: Schema.String,
           limit: Schema.Number,
           offset: Schema.Number,
+          query: Schema.optional(Schema.String),
+          branch: Schema.optional(Schema.NullOr(Schema.String)),
         }),
       ),
       output: Schema.toStandardSchemaV1(
@@ -78,7 +85,16 @@ export const GitGraphRpc = Rpc.define({
       output: Schema.toStandardSchemaV1(
         Schema.Struct({
           current: Schema.NullOr(Schema.String),
+          head: Schema.NullOr(Schema.String),
           branches: Schema.Array(Branch),
+        }),
+      ),
+    },
+    tags: {
+      input: Schema.toStandardSchemaV1(RepositoryInput),
+      output: Schema.toStandardSchemaV1(
+        Schema.Struct({
+          tags: Schema.Array(Tag),
         }),
       ),
     },

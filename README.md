@@ -5,15 +5,25 @@ panel and a typed RPC bridge between the SolidJS GUI and the server plugin.
 
 > OpenCode V2 only. OpenCode V1 is not supported.
 
-## Status — Phase 3
+## Status — Phase 4
 
 Phase 1 validated plugin loading, opening the panel, and RPC transport. Phase 2
-added repository reading and an interactive SVG graph. Phase 3 adds commit file
-inspection:
+added repository reading and an interactive SVG graph. Phase 3 added commit file
+inspection. Phase 4 completes the read-only explorer:
 
-- Multi-branch history, loaded in pages of 50 commits with a **Load more** button.
+- Multi-branch history loaded 300 commits at a time, with a **Load more** button
+  that appends 100 more commits per request.
 - Local and remote branch labels, combined when they have the same name and
   point to the same commit; the checked-out branch is indicated.
+- Tags are read separately and shown as badges on the commits they point at,
+  including annotated tags peeled to their commit.
+- The current `HEAD` commit is marked in the list, and a detached checkout shows
+  the short hash beside the **Detached HEAD** label.
+- Search by commit message or hash against the full repository history, not only
+  the loaded page. Results update as you type after 2 characters, with a 300 ms
+  debounce; Enter applies the query immediately, and clearing the field restores
+  the full history.
+- Filter the history by any local or remote branch; search and filter combine.
 - Branches containing the selected commit, with colors linked to a stable
   per-branch palette rather than graph lanes.
 - SVG commit graph whose nodes and line segments follow the branch color, so a
@@ -23,7 +33,7 @@ inspection:
 - Merge commits use an outer ring, dashed merge links, and an arrow that points
   into the merge commit, showing the side branch flowing into it.
 - Branch tips are shown as colored pills directly on the commit rows.
-- Select a commit to view its author, date, hash, parents, and the files it
+- Select a commit to view its author, date, hash, parents, tags, and the files it
   changed.
 - Changed files show their status (added, modified, deleted, renamed, copied,
   type change), rename source, additions and deletions, and a binary marker.
@@ -61,6 +71,8 @@ checked-out branch or working tree. No destructive Git commands are exposed.
 | Portable RPC schemas | `Schema.toStandardSchemaV1` from `effect` |
 | GUI bundle | `gui()` preset from `@opencode/plugin/gui/vite` |
 | History / branches | Git CLI via `node:child_process.spawn`, with the shell disabled |
+| Tags / HEAD | `git for-each-ref refs/tags` and `git rev-parse HEAD` through typed RPC |
+| Search / branch filter | `git log --grep` and a validated local or remote ref |
 | Fetch all remotes | `git fetch --all` through typed `fetchAll` RPC, only on button click |
 | Commit files | `git diff-tree` name-status and numstat against the first parent, with rename detection |
 | File diff | `git diff` against the first parent, or `git show` for root commits, rendered as a colored unified patch |
@@ -181,7 +193,15 @@ is already checked once by its pull request. The workflow uses Node.js 22.12 and
 - The repository path must be absolute. Read commands have a 10-second timeout;
   user-requested fetch has a 120-second timeout. Captured stdout is limited to
   4 MiB.
-- Each history request is capped at 100 commits and offset 10,000.
+- Each history request is capped at 300 commits and offset 10,000. The panel
+  loads 300 commits initially and appends 100 per **Load more** request.
+- Search queries are capped at 500 characters. The panel needs at least 2
+  characters and waits 300 ms after the last keystroke before searching. Hash-like
+  queries resolve through `git rev-parse`; otherwise they match commit messages
+  with a fixed-string, case-insensitive `git log --grep`.
+- Branch filters are validated against `refs/heads/<name>` and
+  `refs/remotes/<name>` before being passed to Git; an unknown branch is
+  rejected instead of being treated as a revision expression.
 - Each commit file request returns at most 500 files; the RPC response includes
   a `truncated` flag when the commit has more.
 - Each file diff is capped at 256 KiB; the RPC response includes a `truncated`
@@ -211,8 +231,9 @@ src/
 ├── gui.tsx           # GUI entry: Panel, MenuItem, Command
 ├── gui/
 │   ├── branch-pill.tsx # shared branch reference badge
+│   ├── tag-pill.tsx  # shared tag reference badge
 │   ├── colors.ts     # lane palette and stable branch colors
-│   └── panel.tsx     # SolidJS panel, pagination, and SVG graph
+│   └── panel.tsx     # SolidJS panel, search, pagination, and SVG graph
 ├── shared/
 │   ├── branches.ts   # combine matching local and remote refs
 │   └── ids.ts        # plugin and panel ids

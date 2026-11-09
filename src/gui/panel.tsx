@@ -1,12 +1,13 @@
 import type { MountedSession } from "@opencode/plugin/gui"
 import { usePlugin } from "@opencode/plugin/gui"
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js"
-import type { GitBranch, GitCommit, GitFileChange, GitFileStatus } from "../git/reader"
+import type { GitBranch, GitCommit, GitFileChange, GitFileStatus, GitTag } from "../git/reader"
 import { layoutGraph } from "../graph/layout"
 import { edgePath } from "../graph/render"
 import { GitGraphRpc } from "../rpc"
 import { combineBranchRefs, countLogicalBranches, type BranchLabel } from "../shared/branches"
 import { BranchPill } from "./branch-pill"
+import { TagPill } from "./tag-pill"
 import {
   assignGraphColors,
   branchColorMap,
@@ -17,7 +18,10 @@ import {
   laneColor,
 } from "./colors"
 
-const PAGE_SIZE = 50
+const INITIAL_PAGE_SIZE = 300
+const PAGE_SIZE = 100
+const MIN_SEARCH_LENGTH = 2
+const SEARCH_DEBOUNCE_MS = 300
 const ROW_HEIGHT = 50
 const LANE_WIDTH = 14
 const FILE_STATUS_LABELS: Record<GitFileStatus, string> = {
@@ -44,8 +48,13 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
   const [root, setRoot] = createSignal("")
   const [commits, setCommits] = createSignal<GitCommit[]>([])
   const [branches, setBranches] = createSignal<GitBranch[]>([])
+  const [tags, setTags] = createSignal<GitTag[]>([])
   const [containingBranches, setContainingBranches] = createSignal<GitBranch[]>([])
   const [currentBranch, setCurrentBranch] = createSignal<string | null>(null)
+  const [headHash, setHeadHash] = createSignal<string | null>(null)
+  const [searchInput, setSearchInput] = createSignal("")
+  const [appliedQuery, setAppliedQuery] = createSignal("")
+  const [branchFilter, setBranchFilter] = createSignal<string | null>(null)
   const [selected, setSelected] = createSignal<string | null>(null)
   const [offset, setOffset] = createSignal(0)
   const [hasMore, setHasMore] = createSignal(false)
@@ -89,7 +98,26 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
     }
     return groups
   })
+  const tagsByHash = createMemo(() => {
+    const groups = new Map<string, GitTag[]>()
+    for (const tag of tags()) {
+      const list = groups.get(tag.hash)
+      if (list) list.push(tag)
+      else groups.set(tag.hash, [tag])
+    }
+    return groups
+  })
   const branchCount = createMemo(() => countLogicalBranches(branches()))
+  const branchFilterItems = createMemo(() => [
+    {
+      label: ctx.t("panel.allBranches"),
+      onSelect: () => chooseBranch(null),
+    },
+    ...branchLabels().map((branch) => ({
+      label: branch.name,
+      onSelect: () => chooseBranch(branch.name),
+    })),
+  ])
   const indexByHash = createMemo(() => new Map(commits().map((commit, index) => [commit.hash, index])))
   const selectedCommit = createMemo(() => commits().find((commit) => commit.hash === selected()))
   const selectedIndex = createMemo(() => commits().findIndex((commit) => commit.hash === selected()))
@@ -137,17 +165,22 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
     setSelected(null)
     try {
       const client = ctx.client.rpc(GitGraphRpc)
-      const [history, branchInfo] = await Promise.all([
-        client.history({ directory, limit: PAGE_SIZE, offset: 0 }),
+      const query = appliedQuery()
+      const branch = branchFilter()
+      const [history, branchInfo, tagInfo] = await Promise.all([
+        client.history({ directory, limit: INITIAL_PAGE_SIZE, offset: 0, query, branch }),
         client.branches({ directory }),
+        client.tags({ directory }),
       ])
       if (request !== generation) return
       setRoot(history.root)
       setCommits([...history.commits])
       setBranches([...branchInfo.branches])
       setCurrentBranch(branchInfo.current)
+      setHeadHash(branchInfo.head)
+      setTags([...tagInfo.tags])
       setOffset(history.commits.length)
-      setHasMore(history.commits.length === PAGE_SIZE)
+      setHasMore(history.commits.length === INITIAL_PAGE_SIZE)
     } catch (cause) {
       if (request === generation) setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -183,6 +216,8 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
         directory,
         limit: PAGE_SIZE,
         offset: offset(),
+        query: appliedQuery(),
+        branch: branchFilter(),
       })
       if (request !== generation) return
       setCommits((current) => {
@@ -198,8 +233,40 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
     }
   }
 
+  function submittedQuery(): string {
+    const input = searchInput().trim()
+    return input.length >= MIN_SEARCH_LENGTH ? input : ""
+  }
+
+  function submitSearch() {
+    const next = submittedQuery()
+    if (next === appliedQuery()) void refresh(props.session.directory)
+    else setAppliedQuery(next)
+  }
+
+  function chooseBranch(name: string | null) {
+    if (name === branchFilter()) void refresh(props.session.directory)
+    else setBranchFilter(name)
+  }
+
+  // Apply live search after a short pause, so typing does not trigger one Git
+  // request per keystroke. Below the minimum length the full history returns.
   createEffect(() => {
-    void refresh(props.session.directory)
+    const next = submittedQuery()
+    if (next === appliedQuery()) return
+    if (next === "") {
+      setAppliedQuery("")
+      return
+    }
+    const timer = setTimeout(() => setAppliedQuery(next), SEARCH_DEBOUNCE_MS)
+    onCleanup(() => clearTimeout(timer))
+  })
+
+  createEffect(() => {
+    const directory = props.session.directory
+    appliedQuery()
+    branchFilter()
+    void refresh(directory)
   })
 
   createEffect(() => {
@@ -377,6 +444,37 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
         </ctx.ui.Button>
       </header>
 
+      <section style={{ display: "flex", "flex-direction": "column", gap: "6px" }}>
+        <div style={{ display: "flex" }}>
+          <div style={{ flex: 1, "min-width": 0 }}>
+            <ctx.ui.TextInput
+              type="search"
+              label={ctx.t("panel.search")}
+              placeholder={ctx.t("panel.searchPlaceholder")}
+              value={searchInput()}
+              onInput={setSearchInput}
+              onSubmit={submitSearch}
+            />
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: "6px", "align-items": "center", "font-size": "11px" }}>
+          <ctx.ui.Menu
+            trigger="button"
+            icon="branch"
+            label={`${ctx.t("panel.branchFilter")}: ${branchFilter() ?? ctx.t("panel.allBranches")}`}
+            items={branchFilterItems()}
+          />
+          <Show when={searchInput().trim().length > 0 && searchInput().trim().length < MIN_SEARCH_LENGTH}>
+            <span style={{ opacity: 0.65 }}>{ctx.t("panel.searchMin")}</span>
+          </Show>
+          <Show when={appliedQuery()}>
+            <span style={{ opacity: 0.65 }}>
+              {ctx.t("panel.searchResults")}: “{appliedQuery()}”
+            </span>
+          </Show>
+        </div>
+      </section>
+
       <Show when={fetchError()}>
         <div role="alert" style={{ "font-size": "11px", "line-height": 1.5, color: "#da1e28" }}>
           {ctx.t("panel.fetchError")}: {fetchError()}
@@ -414,7 +512,10 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
         <section style={{ display: "flex", "flex-direction": "column", gap: "6px" }}>
           <div style={{ display: "flex", "align-items": "center", gap: "6px", "font-size": "11px" }}>
             <ctx.ui.Icon name="branch" size="small" />
-            <span>{currentBranch() || ctx.t("panel.detached")}</span>
+            <span>
+              {currentBranch() ||
+                (headHash() ? `${ctx.t("panel.detached")} · ${shortHash(headHash() ?? "")}` : ctx.t("panel.detached"))}
+            </span>
             <span style={{ opacity: 0.6 }}>· {branchCount()} {ctx.t("panel.branches")}</span>
           </div>
           <div style={{ display: "flex", gap: "5px", "flex-wrap": "wrap" }}>
@@ -444,7 +545,14 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
       </Show>
 
       <Show when={!loading()} fallback={<span style={{ "font-size": "12px", opacity: 0.65 }}>{ctx.t("panel.loading")}</span>}>
-        <Show when={commits().length > 0} fallback={<span style={{ "font-size": "12px", opacity: 0.65 }}>{ctx.t("panel.empty")}</span>}>
+        <Show
+          when={commits().length > 0}
+          fallback={
+            <span style={{ "font-size": "12px", opacity: 0.65 }}>
+              {appliedQuery() || branchFilter() ? ctx.t("panel.noResults") : ctx.t("panel.empty")}
+            </span>
+          }
+        >
           <div style={{ display: "grid", "grid-template-columns": `${graphWidth()}px minmax(0, 1fr)`, "align-items": "start" }}>
             <svg
               width={graphWidth()}
@@ -566,6 +674,22 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
                         </span>
                         <span style={{ display: "flex", "align-items": "center", gap: "5px", "font-size": "10px", "white-space": "nowrap", overflow: "hidden" }}>
                           <code style={{ opacity: 0.62 }}>{shortHash(commit.hash)}</code>
+                          <Show when={commit.hash === headHash()}>
+                            <span
+                              title={ctx.t("panel.headTitle")}
+                              style={{
+                                padding: "0 4px",
+                                "border-radius": "3px",
+                                "background-color": "rgba(120, 169, 255, 0.20)",
+                                "font-size": "9px",
+                                "font-weight": 600,
+                                "line-height": "14px",
+                                color: "#78a9ff",
+                              }}
+                            >
+                              {ctx.t("panel.head")}
+                            </span>
+                          </Show>
                           <Show when={commit.parents.length > 1}>
                             <span
                               title={ctx.t("panel.mergeCommit")}
@@ -593,7 +717,16 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
                               />
                             )}
                           </For>
-                          <Show when={(branchesByHash().get(commit.hash) ?? []).length === 0 && commit.decorations}>
+                          <For each={tagsByHash().get(commit.hash) ?? []}>
+                            {(tag) => <TagPill name={tag.name} hash={tag.hash} compact />}
+                          </For>
+                          <Show
+                            when={
+                              (branchesByHash().get(commit.hash) ?? []).length === 0 &&
+                              (tagsByHash().get(commit.hash) ?? []).length === 0 &&
+                              commit.decorations
+                            }
+                          >
                             <span title={commit.decorations} style={{ opacity: 0.72 }}>{commit.decorations}</span>
                           </Show>
                         </span>
@@ -620,9 +753,20 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
                             {ctx.t("panel.commitBy")} {commit.author} · {commitDate(commit.timestamp)}
                           </span>
                           <code style={{ "word-break": "break-all", opacity: 0.8 }}>{commit.hash}</code>
+                          <Show when={commit.hash === headHash()}>
+                            <span style={{ color: "#78a9ff" }}>{ctx.t("panel.headTitle")}</span>
+                          </Show>
                           <Show when={commit.parents.length > 0}>
                             <span style={{ "overflow-wrap": "anywhere" }}>
                               {ctx.t("panel.parents")} {commit.parents.map(shortHash).join(", ")}
+                            </span>
+                          </Show>
+                          <Show when={(tagsByHash().get(commit.hash) ?? []).length > 0}>
+                            <span style={{ display: "flex", "align-items": "center", gap: "5px", "flex-wrap": "wrap" }}>
+                              <strong>{ctx.t("panel.tags")}</strong>
+                              <For each={tagsByHash().get(commit.hash) ?? []}>
+                                {(tag) => <TagPill name={tag.name} hash={tag.hash} />}
+                              </For>
                             </span>
                           </Show>
                           <div style={{ display: "flex", "flex-direction": "column", gap: "6px", "margin-top": "2px" }}>

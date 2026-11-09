@@ -6,6 +6,7 @@ import {
   readCommitFiles,
   fetchAll,
   readHistory,
+  readTags,
 } from "./git/reader"
 import { GitGraphRpc } from "./rpc"
 
@@ -21,8 +22,12 @@ export default Plugin.define({
         directory: ctx.location.directory,
       }),
       history: async (input, call) =>
-        readHistory(input.directory, input.limit, input.offset, call.signal),
+        readHistory(input.directory, input.limit, input.offset, call.signal, {
+          query: input.query,
+          branch: input.branch,
+        }),
       branches: async (input, call) => readBranches(input.directory, call.signal),
+      tags: async (input, call) => readTags(input.directory, call.signal),
       fetchAll: async (input, call) => {
         await fetchAll(input.directory, call.signal)
         return { ok: true }
