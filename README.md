@@ -5,11 +5,12 @@ panel and a typed RPC bridge between the SolidJS GUI and the server plugin.
 
 > OpenCode V2 only. OpenCode V1 is not supported.
 
-## Status — Phase 4
+## Status — Phase 5 (in progress)
 
 Phase 1 validated plugin loading, opening the panel, and RPC transport. Phase 2
 added repository reading and an interactive SVG graph. Phase 3 added commit file
-inspection. Phase 4 completes the read-only explorer:
+inspection. Phase 4 completed the read-only explorer. Phase 5 starts with
+syntax-highlighted diffs:
 
 - Multi-branch history loaded 300 commits at a time, with a **Load more** button
   that appends 100 more commits per request.
@@ -39,6 +40,9 @@ inspection. Phase 4 completes the read-only explorer:
   type change), rename source, additions and deletions, and a binary marker.
 - Click a changed file to open its unified diff against the first parent, with
   colored additions, deletions, and hunk headers.
+- Diff lines are syntax highlighted for common languages (TypeScript/JavaScript,
+  JSON, CSS/SCSS, HTML/XML, shell, Python, Ruby, Go, Rust, C-family, PHP, Swift,
+  Kotlin, SQL, Lua, YAML, TOML). Files with an unknown type stay plain text.
 - **Refresh** repository data manually, or click **Fetch all** to fetch from all
   configured remotes and then refresh the graph and branch list.
 
@@ -75,7 +79,7 @@ checked-out branch or working tree. No destructive Git commands are exposed.
 | Search / branch filter | `git log --grep` and a validated local or remote ref |
 | Fetch all remotes | `git fetch --all` through typed `fetchAll` RPC, only on button click |
 | Commit files | `git diff-tree` name-status and numstat against the first parent, with rename detection |
-| File diff | `git diff` against the first parent, or `git show` for root commits, rendered as a colored unified patch |
+| File diff | `git diff` against the first parent, or `git show` for root commits, rendered as a syntax-highlighted unified patch |
 | Graph | Pure lane-layout algorithm in `src/graph/layout.ts`, rendered as SVG |
 
 ## Verified versions
@@ -206,6 +210,10 @@ is already checked once by its pull request. The workflow uses Node.js 22.12 and
   a `truncated` flag when the commit has more.
 - Each file diff is capped at 256 KiB; the RPC response includes a `truncated`
   flag when the patch is larger.
+- Diff highlighting uses a small built-in tokenizer, not a parser: it colors
+  comments, strings, numbers, keywords, types, and function calls per line.
+  Unknown file types, Markdown, and binary files stay uncolored, and a block
+  comment that is still open when a new hunk starts is not carried into it.
 - Merge commits are compared against their first parent, so the list shows what
   the merge brought in relative to the previous commit on the branch.
 - Commits are read from all visible refs (`git log --all`), so remote branches
@@ -233,6 +241,7 @@ src/
 │   ├── branch-pill.tsx # shared branch reference badge
 │   ├── tag-pill.tsx  # shared tag reference badge
 │   ├── colors.ts     # lane palette and stable branch colors
+│   ├── highlight.ts  # dependency-free diff syntax highlighting
 │   └── panel.tsx     # SolidJS panel, search, pagination, and SVG graph
 ├── shared/
 │   ├── branches.ts   # combine matching local and remote refs
@@ -243,5 +252,6 @@ src/
     ├── git-reader.test.ts
     ├── graph-layout.test.ts
     ├── graph-render.test.ts
+    ├── highlight.test.ts
     └── ids.test.ts
 ```

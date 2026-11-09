@@ -315,6 +315,40 @@ Goal: finish the read-only explorer before adding Git actions.
   unborn branch, message search, hash search, and local/remote branch filters.
 - The suite now has 31 tests, and `npm run check` passes.
 
+## Diff syntax highlighting — 2026-11-09
+
+Goal: make the unified diff viewer readable at a glance, without adding a
+highlighting dependency.
+
+### Highlighter
+
+- New dependency-free, line-oriented tokenizer in `src/gui/highlight.ts`,
+  covering JavaScript/TypeScript, JSON, CSS/SCSS, HTML/XML, shell, Python, Ruby,
+  Go, Rust, C-family, PHP, Swift, Kotlin, SQL, Lua, YAML, and TOML.
+- Tokens are comments, strings, numbers, keywords, types, and function calls.
+  Unknown extensions and Markdown are left as plain text.
+- Block-comment state carries across consecutive diff lines and resets at hunk
+  headers. `--- ` and `+++ ` are treated as file headers only before the first
+  hunk, so a hunk line that starts with `-- ` or `++ ` is still classified as a
+  deletion or an addition.
+- The highlighter never rewrites content: the concatenation of the diff marker
+  and its tokens equals the original line, which is covered by a test.
+
+### GUI
+
+- The diff viewer keeps the addition/deletion background and marker colors and
+  now colors the code inside each line. Comments are italic.
+- No RPC, Git command, or dependency changed: highlighting runs entirely in the
+  GUI on the patch already returned by `commitFileDiff`.
+
+### Tests and documentation
+
+- Added `src/tests/highlight.test.ts`: language detection, token classification,
+  escaped strings, block-comment continuation, diff line classification, hunk
+  disambiguation, unknown-language fallback, and text fidelity.
+- The suite now has 45 tests and `npm run check` passes.
+- README status, API table, limits, and project structure updated.
+
 ## Current status against the original brief
 
 | Original feature | Status |
@@ -326,7 +360,7 @@ Goal: finish the read-only explorer before adding Git actions.
 | Merge and parent-child relationships | Done |
 | Tags | Done: badges on commits, annotated tags peeled to their commit |
 | Commit selection details | Partial: metadata, tags, containing branches, changed files and stats; full patch not yet |
-| File diffs with syntax highlighting | Partial: unified diff viewer with line colors; syntax highlighting not yet |
+| File diffs with syntax highlighting | Done: unified diff viewer with line colors and per-line syntax highlighting for common languages |
 | Search by message or hash | Done: full history, server-side, combines with branch filter |
 | Filter by branch | Done: local and remote branches |
 | Git actions (checkout, cherry-pick, revert, reset, push, fetch, pull) | Partial: explicit Fetch all updates configured remotes; other actions not yet |
@@ -335,9 +369,8 @@ Goal: finish the read-only explorer before adding Git actions.
 
 ## Next steps
 
-1. Syntax highlighting inside the diff viewer.
-2. Action layer with explicit confirmation for destructive operations.
-3. Closable tab driven by a launcher.
-4. Error and conflict handling hardening.
-5. Remaining integration tests for empty repositories, tags, conflicts, local
+1. Action layer with explicit confirmation for destructive operations.
+2. Closable tab driven by a launcher.
+3. Error and conflict handling hardening.
+4. Remaining integration tests for empty repositories, tags, conflicts, local
    changes, and command failures.
