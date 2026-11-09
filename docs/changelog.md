@@ -349,6 +349,54 @@ highlighting dependency.
 - The suite now has 45 tests and `npm run check` passes.
 - README status, API table, limits, and project structure updated.
 
+## Git actions — server and RPC — 2026-11-09
+
+Goal: expose the write actions from the brief without letting the GUI build Git
+commands.
+
+### Shared executor
+
+- The safe Git runner moved out of `reader.ts` into `src/git/exec.ts`, together
+  with repository path validation, branch-name validation, and full-hash
+  validation. The reader and the new action layer now share one executor.
+- `runGit` still uses `spawn("git", args)` with `shell: false`, a fixed
+  argument list, a 10-second default timeout, and a 4 MiB stdout cap. Network
+  actions use a 120-second timeout.
+
+### Action layer
+
+- New `src/git/actions.ts` with `readStatus`, `readRemotes`, `checkoutBranch`,
+  `checkoutCommit`, `cherryPick`, `revert`, `reset`, `push`, and `pull`.
+- `readStatus` parses `git status --porcelain=v1 -z`, counting staged,
+  unstaged, untracked, and conflicted entries. It also reports the current
+  branch and `HEAD`, plus any merge, cherry-pick, revert, or rebase left in
+  progress after a conflict.
+- `checkoutBranch` accepts only a validated name that resolves to
+  `refs/heads/<name>`; remote names and revision expressions are refused.
+  `checkoutCommit` uses `--detach` with a full commit hash.
+- `cherryPick` and `revert --no-edit` accept a full commit hash only.
+- `reset` accepts exactly `soft`, `mixed`, or `hard`; any other value is
+  rejected before Git runs.
+- `push` validates the remote against the repository's configured remotes and
+  pushes an explicit `refs/heads/<branch>:refs/heads/<branch>` refspec, so the
+  GUI cannot inject an option or a refspec.
+- `pull` is `git pull --ff-only`, so it never creates a merge commit; a
+  diverged branch fails with Git's error.
+- A checkout that would overwrite local changes is not forced: Git refuses it,
+  and the error is returned to the GUI.
+- New typed RPC methods: `status`, `remotes`, `checkoutBranch`,
+  `checkoutCommit`, `cherryPick`, `revert`, `reset`, `push`, and `pull`.
+
+### Tests
+
+- Unit tests cover status parsing, including renames and conflicts.
+- Integration tests cover checkout of a branch and a commit, dirty-tree
+  checkout refusal, cherry-pick, a cherry-pick conflict reported through
+  `status`, revert, the three reset modes, push to a local bare remote, a
+  fast-forward pull, and rejection of unknown remotes, branches, hashes, and
+  reset modes.
+- The suite now has 55 tests and `npm run check` passes.
+
 ## Current status against the original brief
 
 | Original feature | Status |

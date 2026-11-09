@@ -1,5 +1,16 @@
 import { Plugin } from "@opencode/plugin"
 import {
+  checkoutBranch,
+  checkoutCommit,
+  cherryPick,
+  pull,
+  push,
+  readRemotes,
+  readStatus,
+  reset,
+  revert,
+} from "./git/actions"
+import {
   readBranches,
   readBranchesContaining,
   readCommitFileDiff,
@@ -44,6 +55,36 @@ export default Plugin.define({
           input.previousPath,
           call.signal,
         ),
+      status: async (input, call) => readStatus(input.directory, call.signal),
+      remotes: async (input, call) => readRemotes(input.directory, call.signal),
+      checkoutBranch: async (input, call) => {
+        await checkoutBranch(input.directory, input.branch, call.signal)
+        return { ok: true }
+      },
+      checkoutCommit: async (input, call) => {
+        await checkoutCommit(input.directory, input.hash, call.signal)
+        return { ok: true }
+      },
+      cherryPick: async (input, call) => {
+        await cherryPick(input.directory, input.hash, call.signal)
+        return { ok: true }
+      },
+      revert: async (input, call) => {
+        await revert(input.directory, input.hash, call.signal)
+        return { ok: true }
+      },
+      reset: async (input, call) => {
+        await reset(input.directory, input.hash, input.mode, call.signal)
+        return { ok: true }
+      },
+      push: async (input, call) => {
+        await push(input.directory, input.remote, input.branch, call.signal)
+        return { ok: true }
+      },
+      pull: async (input, call) => {
+        await pull(input.directory, call.signal)
+        return { ok: true }
+      },
     })
   },
 })

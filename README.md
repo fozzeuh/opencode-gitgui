@@ -45,10 +45,14 @@ syntax-highlighted diffs:
   Kotlin, SQL, Lua, YAML, TOML). Files with an unknown type stay plain text.
 - **Refresh** repository data manually, or click **Fetch all** to fetch from all
   configured remotes and then refresh the graph and branch list.
+- The server exposes typed RPC actions for checkout (branch or commit),
+  cherry-pick, revert, reset (`soft`, `mixed`, `hard`), push, and pull. The GUI
+  calls those endpoints; it never builds a Git command.
 
-Git inspection is read-only. The explicit **Fetch all** action contacts configured
-remotes and updates remote-tracking refs, but does not prune refs or change the
-checked-out branch or working tree. No destructive Git commands are exposed.
+Git inspection is read-only. Write actions run only after an explicit user
+request, never in the background. The explicit **Fetch all** action contacts
+configured remotes and updates remote-tracking refs, but does not prune refs or
+change the checked-out branch or working tree.
 
 ## Documentation
 
@@ -78,6 +82,12 @@ checked-out branch or working tree. No destructive Git commands are exposed.
 | Tags / HEAD | `git for-each-ref refs/tags` and `git rev-parse HEAD` through typed RPC |
 | Search / branch filter | `git log --grep` and a validated local or remote ref |
 | Fetch all remotes | `git fetch --all` through typed `fetchAll` RPC, only on button click |
+| Working tree status | `git status --porcelain=v1 -z` through the `status` RPC |
+| Remotes | `git remote` through the `remotes` RPC |
+| Checkout | `git checkout <branch>` or `git checkout --detach <hash>` through typed RPC |
+| Cherry-pick / revert | `git cherry-pick <hash>` and `git revert --no-edit <hash>` |
+| Reset | `git reset --soft`, `--mixed`, or `--hard` with a validated mode |
+| Push / pull | `git push <remote> refs/heads/<branch>:refs/heads/<branch>` and `git pull --ff-only` |
 | Commit files | `git diff-tree` name-status and numstat against the first parent, with rename detection |
 | File diff | `git diff` against the first parent, or `git show` for root commits, rendered as a syntax-highlighted unified patch |
 | Graph | Pure lane-layout algorithm in `src/graph/layout.ts`, rendered as SVG |
@@ -219,8 +229,21 @@ is already checked once by its pull request. The workflow uses Node.js 22.12 and
 - Commits are read from all visible refs (`git log --all`), so remote branches
   must already have been fetched locally. Use **Fetch all** to update configured
   remotes.
-- Fetch does not prune stale refs. Checkout, reset, cherry-pick, push, pull, and
-  deletion remain out of scope.
+- Fetch does not prune stale refs.
+- Write actions accept only validated inputs: a local branch name that resolves
+  to `refs/heads/<name>`, a full commit hash, a configured remote name, and one
+  of the three reset modes. Revision expressions and option-like values are
+  rejected before Git runs.
+- Checkout never forces over local changes. Git refuses an overwrite and its
+  error is shown; the panel warns first when the working tree is dirty.
+- Cherry-pick and revert stop on conflict, leaving the operation in progress.
+  The status RPC reports the conflict count and the in-progress operation
+  instead of hiding the failure.
+- Push and pull contact the network only after an explicit user request and use
+  the same 120-second timeout as fetch. Pull is fast-forward only and fails on a
+  diverged branch.
+- Branch deletion, tag management, merge, rebase, stash, and remote
+  configuration remain out of scope.
 
 ## Project structure
 
@@ -230,9 +253,11 @@ docs/
 └── changelog.md       # phase history and remaining scope
 src/
 ├── index.ts          # server plugin: RPC registration
-├── rpc.ts            # typed RPC contract (ping, history, branches)
+├── rpc.ts            # typed RPC contract (history, files, status, actions)
 ├── git/
-│   └── reader.ts     # Git commands, history reading, and parsing
+│   ├── exec.ts       # safe Git runner and input validation
+│   ├── reader.ts     # Git commands, history reading, and parsing
+│   └── actions.ts    # status, checkout, cherry-pick, revert, reset, push, pull
 ├── graph/
 │   ├── layout.ts     # graph lane and edge layout
 │   └── render.ts     # SVG edge paths and merge arrow direction
@@ -249,6 +274,7 @@ src/
 └── tests/
     ├── branches.test.ts
     ├── colors.test.ts
+    ├── git-actions.test.ts
     ├── git-reader.test.ts
     ├── graph-layout.test.ts
     ├── graph-render.test.ts
