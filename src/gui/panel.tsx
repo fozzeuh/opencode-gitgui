@@ -8,6 +8,8 @@ import { GitGraphRpc } from "../rpc"
 import { combineBranchRefs, countLogicalBranches, type BranchLabel } from "../shared/branches"
 import { BranchPill } from "./branch-pill"
 import { TagPill } from "./tag-pill"
+import type { DiffLineKind, TokenKind } from "./highlight"
+import { highlightPatch } from "./highlight"
 import {
   assignGraphColors,
   branchColorMap,
@@ -41,6 +43,36 @@ const FILE_STATUS_COLORS: Record<GitFileStatus, string> = {
   copied: "#33b1ff",
   "type-changed": "#f1c21b",
   unknown: "#8d8d8d",
+}
+const TOKEN_COLORS: Record<TokenKind, string | undefined> = {
+  plain: undefined,
+  comment: "#8d8d8d",
+  string: "#a8e05f",
+  number: "#33b1ff",
+  keyword: "#ff7eb6",
+  type: "#f1c21b",
+  function: "#78a9ff",
+}
+
+function diffLineStyle(kind: DiffLineKind) {
+  switch (kind) {
+    case "meta":
+      return { opacity: 0.6 }
+    case "hunk":
+      return { color: "#78a9ff", "background-color": "rgba(120, 169, 255, 0.10)" }
+    case "add":
+      return { "background-color": "rgba(66, 190, 101, 0.10)" }
+    case "remove":
+      return { "background-color": "rgba(218, 30, 40, 0.10)" }
+    default:
+      return {}
+  }
+}
+
+function diffPrefixStyle(kind: DiffLineKind) {
+  if (kind === "add") return { color: "#42be65" }
+  if (kind === "remove") return { color: "#da1e28" }
+  return {}
 }
 
 export function GitGraphPanel(props: { readonly session: MountedSession }) {
@@ -146,7 +178,7 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
   const selectedFileChange = createMemo(
     () => files().find((file) => file.path === selectedFile()) ?? null,
   )
-  const diffLines = createMemo(() => diff().replace(/\n$/, "").split("\n"))
+  const diffLines = createMemo(() => highlightPatch(diff(), selectedFileChange()?.path ?? ""))
 
   function observeDetail(element: HTMLElement) {
     detailObserver?.disconnect()
@@ -383,36 +415,6 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
       event.preventDefault()
       activateFile(file)
     }
-  }
-
-  function diffLineStyle(line: string) {
-    if (
-      line.startsWith("diff --git") ||
-      line.startsWith("index ") ||
-      line.startsWith("new file mode") ||
-      line.startsWith("deleted file mode") ||
-      line.startsWith("old mode") ||
-      line.startsWith("new mode") ||
-      line.startsWith("similarity index") ||
-      line.startsWith("rename from") ||
-      line.startsWith("rename to") ||
-      line.startsWith("copy from") ||
-      line.startsWith("copy to") ||
-      line.startsWith("--- ") ||
-      line.startsWith("+++ ")
-    ) {
-      return { opacity: 0.6 }
-    }
-    if (line.startsWith("@@")) {
-      return { color: "#78a9ff", "background-color": "rgba(120, 169, 255, 0.10)" }
-    }
-    if (line.startsWith("+")) {
-      return { color: "#42be65", "background-color": "rgba(66, 190, 101, 0.10)" }
-    }
-    if (line.startsWith("-")) {
-      return { color: "#da1e28", "background-color": "rgba(218, 30, 40, 0.10)" }
-    }
-    return {}
   }
 
   function onCommitKeyDown(event: KeyboardEvent, commit: GitCommit) {
@@ -970,10 +972,25 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
                                                   style={{
                                                     padding: "0 6px",
                                                     "white-space": "pre",
-                                                    ...diffLineStyle(line),
+                                                    ...diffLineStyle(line.kind),
                                                   }}
                                                 >
-                                                  {line || " "}
+                                                  <Show when={line.prefix.length > 0}>
+                                                    <span style={diffPrefixStyle(line.kind)}>{line.prefix}</span>
+                                                  </Show>
+                                                  <For each={line.tokens}>
+                                                    {(token) => (
+                                                      <span
+                                                        style={{
+                                                          color: TOKEN_COLORS[token.kind],
+                                                          "font-style": token.kind === "comment" ? "italic" : undefined,
+                                                        }}
+                                                      >
+                                                        {token.text}
+                                                      </span>
+                                                    )}
+                                                  </For>
+                                                  <Show when={line.tokens.length === 0}>{"\u00a0"}</Show>
                                                 </div>
                                               )}
                                             </For>
