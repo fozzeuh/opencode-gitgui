@@ -570,6 +570,15 @@ an npm package makes the documented installation `plugins:
 No runtime behavior changed: the server part, RPC contract, and GUI bundle are
 byte-for-byte the same apart from the dependency range.
 
+## Public-facing README — 2026-11-10
+
+- Reworked the README as a concise project landing page for public visitors,
+  highlighting the plugin's purpose, main features, requirements, npm
+  installation, safety guarantees, development setup, and support links.
+- Added a screenshot reference at `docs/assets/git-graph.png`; the image can be
+  added at that path when the final screenshot is ready.
+- No runtime behavior or package APIs changed.
+
 ## Current status against the original brief
 
 | Original feature | Status |
