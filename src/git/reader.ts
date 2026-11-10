@@ -424,6 +424,16 @@ export async function readCommitFiles(
   return { files: files.slice(0, MAX_FILES), truncated: files.length > MAX_FILES }
 }
 
+function toFileDiff(output: string): GitFileDiff {
+  const binary = /^Binary files .* differ$/m.test(output) || output.includes("GIT binary patch")
+  const truncated = output.length > MAX_PATCH
+  return {
+    patch: truncated ? output.slice(0, MAX_PATCH) : output,
+    binary,
+    truncated,
+  }
+}
+
 export async function readCommitFileDiff(
   directory: string,
   hash: string,
@@ -440,12 +450,20 @@ export async function readCommitFileDiff(
   const args = firstParent
     ? ["diff", "--no-color", "--unified=3", firstParent, commit, "--", ...paths]
     : ["show", "--format=", "--no-color", "--unified=3", commit, "--", ...paths]
-  const output = await runGit(args, cwd, signal)
-  const binary = /^Binary files .* differ$/m.test(output) || output.includes("GIT binary patch")
-  const truncated = output.length > MAX_PATCH
-  return {
-    patch: truncated ? output.slice(0, MAX_PATCH) : output,
-    binary,
-    truncated,
-  }
+  return toFileDiff(await runGit(args, cwd, signal))
+}
+
+/** Read the whole patch of a commit, compared against its first parent. */
+export async function readCommitPatch(
+  directory: string,
+  hash: string,
+  signal?: AbortSignal,
+): Promise<GitFileDiff> {
+  const commit = commitHash(hash)
+  const cwd = repositoryDirectory(directory)
+  const firstParent = await firstParentOf(cwd, commit, signal)
+  const args = firstParent
+    ? ["diff", "--no-color", "--unified=3", firstParent, commit]
+    : ["show", "--format=", "--no-color", "--unified=3", commit]
+  return toFileDiff(await runGit(args, cwd, signal))
 }

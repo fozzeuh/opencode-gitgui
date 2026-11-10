@@ -47,6 +47,8 @@ export default Plugin.define({
       "panel.noDiff": "No textual changes to display.",
       "panel.binaryDiff": "Binary file — no text diff available.",
       "panel.diffTruncated": "Diff truncated because it is too large.",
+      "panel.fullPatch": "Full patch",
+      "panel.perFileDiff": "Per-file view",
       "panel.closeDiff": "Close",
       "panel.binary": "Binary",
       "panel.containingBranches": "Current branches containing this commit",

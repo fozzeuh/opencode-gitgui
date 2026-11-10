@@ -509,6 +509,26 @@ and prove that bad input fails instead of returning partial data.
   an abbreviated commit hash, and a NUL path all reject with an error.
 - The suite now has 64 tests and `npm run check` passes.
 
+## Whole-commit patch view — 2026-11-10
+
+Goal: read every change of a commit in one diff instead of opening files one at
+a time.
+
+- New `readCommitPatch` server function and `commitPatch` RPC method. It diffs
+  the commit against its first parent, or uses `git show --format=` for a root
+  commit, and applies the same 256 KiB cap and truncation flag as the per-file
+  diff.
+- The changed-files header now has a **Full patch** / **Per-file view** toggle.
+  Full patch renders every file of the commit in the existing highlighted diff
+  viewer; clicking a file switches back to the per-file view for that file.
+- The shared diff viewer was extracted into one component, so both views use the
+  same loading, error, binary, empty, and truncation states.
+- A binary file inside the whole patch does not hide the rest: the patch text
+  keeps Git's `Binary files … differ` lines, while the per-file view still shows
+  its binary notice.
+- A new integration test covers a root commit patch and a two-file patch, plus
+  rejection of an abbreviated hash. The suite now has 65 tests.
+
 ## Current status against the original brief
 
 | Original feature | Status |
@@ -519,7 +539,7 @@ and prove that bad input fails instead of returning partial data.
 | Current branch / HEAD indicator | Done: current branch, HEAD commit badge, detached HEAD short hash |
 | Merge and parent-child relationships | Done |
 | Tags | Done: badges on commits, annotated tags peeled to their commit |
-| Commit selection details | Partial: metadata, tags, containing branches, changed files and stats; full patch not yet |
+| Commit selection details | Done: metadata, tags, containing branches, changed files and stats, per-file diffs, and a whole-commit patch view |
 | File diffs with syntax highlighting | Done: unified diff viewer with line colors and per-line syntax highlighting for common languages |
 | Search by message or hash | Done: full history, server-side, combines with branch filter |
 | Filter by branch | Done: local and remote branches |
@@ -530,7 +550,6 @@ and prove that bad input fails instead of returning partial data.
 
 ## Next steps
 
-1. Optional: show a whole commit patch in one view. The detail card currently
-   shows one changed file at a time.
+1. Page or lazy-load very large patches instead of truncating them at 256 KiB.
 2. Branch deletion, tag management, merge, rebase, stash, and remote
    configuration remain out of scope and are documented as such.

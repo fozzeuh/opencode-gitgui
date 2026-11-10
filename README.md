@@ -64,6 +64,10 @@ syntax-highlighted diffs and the confirmed Git action layer:
   and staged; Abort is destructive and discards the partial result. Merge and
   rebase recovery are not offered because the panel never starts those
   operations.
+- The changed-files header toggles between **Per-file view** and **Full patch**.
+  Full patch shows every file of the commit in one diff; clicking a file returns
+  to that file's view. Patches are capped at 256 KiB and marked truncated beyond
+  that.
 - The panel is a regular closable side tab. Open it from the side panel `+` menu
   or the command palette; closing it removes it from the strip, and it can be
   restored from the host's recently-closed list.
@@ -112,6 +116,7 @@ prunes refs.
 | Action confirmations | `ctx.dialogs.confirm`, `ctx.dialogs.select`, and `ctx.dialogs.alert` |
 | Actions menu | `ctx.ui.Menu` with `UiMenuEntry` items |
 | Commit files | `git diff-tree` name-status and numstat against the first parent, with rename detection |
+| Commit patch | `git diff` against the first parent, or `git show --format=` for a root commit |
 | File diff | `git diff` against the first parent, or `git show` for root commits, rendered as a syntax-highlighted unified patch |
 | Graph | Pure lane-layout algorithm in `src/graph/layout.ts`, rendered as SVG |
 
@@ -243,8 +248,8 @@ is already checked once by its pull request. The workflow uses Node.js 22.12 and
   rejected instead of being treated as a revision expression.
 - Each commit file request returns at most 500 files; the RPC response includes
   a `truncated` flag when the commit has more.
-- Each file diff is capped at 256 KiB; the RPC response includes a `truncated`
-  flag when the patch is larger.
+- Each file diff and the whole-commit patch are capped at 256 KiB; the RPC
+  response includes a `truncated` flag when the patch is larger.
 - Diff highlighting uses a small built-in tokenizer, not a parser: it colors
   comments, strings, numbers, keywords, types, and function calls per line.
   Unknown file types, Markdown, and binary files stay uncolored, and a block

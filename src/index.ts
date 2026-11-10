@@ -16,6 +16,7 @@ import {
   readBranchesContaining,
   readCommitFileDiff,
   readCommitFiles,
+  readCommitPatch,
   fetchAll,
   readHistory,
   readTags,
@@ -56,6 +57,8 @@ export default Plugin.define({
           input.previousPath,
           call.signal,
         ),
+      commitPatch: async (input, call) =>
+        readCommitPatch(input.directory, input.hash, call.signal),
       status: async (input, call) => readStatus(input.directory, call.signal),
       remotes: async (input, call) => readRemotes(input.directory, call.signal),
       checkoutBranch: async (input, call) => {

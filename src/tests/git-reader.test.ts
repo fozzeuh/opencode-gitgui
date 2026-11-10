@@ -15,6 +15,7 @@ import {
   readBranchesContaining,
   readCommitFileDiff,
   readCommitFiles,
+  readCommitPatch,
   readHistory,
   readTags,
 } from "../git/reader"
@@ -394,6 +395,52 @@ describe("Git reader integration", () => {
           binary: false,
         },
       ])
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("reads the whole patch of a commit, including a root commit", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "git-graph-patch-"))
+    const git = (args: string[]) =>
+      execFileSync("git", args, {
+        cwd: directory,
+        stdio: "ignore",
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: "Git Graph Test",
+          GIT_AUTHOR_EMAIL: "git-graph@example.invalid",
+          GIT_COMMITTER_NAME: "Git Graph Test",
+          GIT_COMMITTER_EMAIL: "git-graph@example.invalid",
+        },
+      })
+    const head = () =>
+      execFileSync("git", ["rev-parse", "HEAD"], { cwd: directory, encoding: "utf8" }).trim()
+
+    try {
+      git(["init", "-b", "main"])
+      writeFileSync(join(directory, "a.txt"), "first a\n")
+      writeFileSync(join(directory, "b.txt"), "first b\n")
+      git(["add", "a.txt", "b.txt"])
+      git(["commit", "-m", "Base commit"])
+      const rootHash = head()
+
+      const rootPatch = await readCommitPatch(directory, rootHash)
+      expect(rootPatch.binary).toBe(false)
+      expect(rootPatch.truncated).toBe(false)
+      expect(rootPatch.patch).toContain("diff --git a/a.txt b/a.txt")
+      expect(rootPatch.patch).toContain("diff --git a/b.txt b/b.txt")
+
+      writeFileSync(join(directory, "a.txt"), "second a\n")
+      writeFileSync(join(directory, "b.txt"), "second b\n")
+      git(["commit", "-am", "Change both"])
+
+      const patch = await readCommitPatch(directory, head())
+      expect(patch.patch).toContain("diff --git a/a.txt b/a.txt")
+      expect(patch.patch).toContain("diff --git a/b.txt b/b.txt")
+      expect(patch.patch).toContain("+second a")
+      expect(patch.patch).toContain("+second b")
+      await expect(readCommitPatch(directory, "HEAD")).rejects.toThrow("hash is invalid")
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }

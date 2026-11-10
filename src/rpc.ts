@@ -152,6 +152,10 @@ export const GitGraphRpc = Rpc.define({
       ),
       output: Schema.toStandardSchemaV1(FileDiff),
     },
+    commitPatch: {
+      input: Schema.toStandardSchemaV1(ActionInput),
+      output: Schema.toStandardSchemaV1(FileDiff),
+    },
     status: {
       input: Schema.toStandardSchemaV1(RepositoryInput),
       output: Schema.toStandardSchemaV1(Status),

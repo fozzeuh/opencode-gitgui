@@ -14,7 +14,7 @@ import { GitGraphRpc } from "../rpc"
 import { combineBranchRefs, countLogicalBranches, type BranchLabel } from "../shared/branches"
 import { BranchPill } from "./branch-pill"
 import { TagPill } from "./tag-pill"
-import type { DiffLineKind, TokenKind } from "./highlight"
+import type { DiffLineKind, HighlightedLine, TokenKind } from "./highlight"
 import { highlightPatch } from "./highlight"
 import {
   assignGraphColors,
@@ -96,6 +96,150 @@ function diffPrefixStyle(kind: DiffLineKind) {
   return {}
 }
 
+interface DiffViewProps {
+  readonly title: string
+  readonly lines: readonly HighlightedLine[]
+  readonly binary: boolean
+  readonly truncated: boolean
+  readonly loading: boolean
+  readonly error: string
+  onClose(): void
+}
+
+/** One framed diff viewer, shared by the per-file and whole-commit views. */
+function DiffView(props: DiffViewProps) {
+  const ctx = usePlugin()
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        "flex-direction": "column",
+        "border-radius": "4px",
+        border: "1px solid rgba(127, 127, 127, 0.25)",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          "align-items": "center",
+          gap: "6px",
+          padding: "4px 6px",
+          "background-color": "rgba(127, 127, 127, 0.12)",
+          "font-size": "11px",
+        }}
+      >
+        <strong
+          style={{
+            flex: 1,
+            "text-overflow": "ellipsis",
+            "white-space": "nowrap",
+            overflow: "hidden",
+          }}
+        >
+          {props.title}
+        </strong>
+        <button
+          type="button"
+          onClick={props.onClose}
+          style={{
+            padding: 0,
+            border: "none",
+            background: "none",
+            color: "inherit",
+            cursor: "pointer",
+            "font-size": "11px",
+            opacity: 0.7,
+          }}
+        >
+          {ctx.t("panel.closeDiff")}
+        </button>
+      </div>
+      <Show
+        when={!props.loading}
+        fallback={
+          <span style={{ padding: "6px", "font-size": "11px", opacity: 0.65 }}>
+            {ctx.t("panel.loadingDiff")}
+          </span>
+        }
+      >
+        <Show
+          when={!props.error}
+          fallback={
+            <span role="alert" style={{ padding: "6px", "font-size": "11px", color: "#da1e28" }}>
+              {props.error}
+            </span>
+          }
+        >
+          <Show
+            when={!props.binary}
+            fallback={
+              <span style={{ padding: "6px", "font-size": "11px", opacity: 0.65 }}>
+                {ctx.t("panel.binaryDiff")}
+              </span>
+            }
+          >
+            <Show
+              when={props.lines.length > 0}
+              fallback={
+                <span style={{ padding: "6px", "font-size": "11px", opacity: 0.65 }}>
+                  {ctx.t("panel.noDiff")}
+                </span>
+              }
+            >
+              <div
+                style={{
+                  "max-height": "320px",
+                  overflow: "auto",
+                  "font-family": "ui-monospace, SFMono-Regular, Menlo, monospace",
+                  "font-size": "10px",
+                  "line-height": 1.45,
+                  "tab-size": 2,
+                }}
+              >
+                <For each={props.lines}>
+                  {(line) => (
+                    <div
+                      style={{
+                        padding: "0 6px",
+                        "white-space": "pre",
+                        ...diffLineStyle(line.kind),
+                      }}
+                    >
+                      <Show when={line.prefix.length > 0}>
+                        <span style={diffPrefixStyle(line.kind)}>{line.prefix}</span>
+                      </Show>
+                      <For each={line.tokens}>
+                        {(token) => (
+                          <span
+                            style={{
+                              color: TOKEN_COLORS[token.kind],
+                              "font-style": token.kind === "comment" ? "italic" : undefined,
+                            }}
+                          >
+                            {token.text}
+                          </span>
+                        )}
+                      </For>
+                      <Show when={line.tokens.length === 0}>{"\u00a0"}</Show>
+                    </div>
+                  )}
+                </For>
+              </div>
+              <Show when={props.truncated}>
+                <span style={{ padding: "4px 6px", "font-size": "10px", opacity: 0.65 }}>
+                  {ctx.t("panel.diffTruncated")}
+                </span>
+              </Show>
+            </Show>
+          </Show>
+        </Show>
+      </Show>
+    </div>
+  )
+}
+
 export function GitGraphPanel(props: { readonly session: MountedSession }) {
   const ctx = usePlugin()
   const [root, setRoot] = createSignal("")
@@ -133,12 +277,18 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
   const [diffTruncated, setDiffTruncated] = createSignal(false)
   const [loadingDiff, setLoadingDiff] = createSignal(false)
   const [diffError, setDiffError] = createSignal("")
+  const [patchMode, setPatchMode] = createSignal(false)
+  const [patch, setPatch] = createSignal("")
+  const [patchTruncated, setPatchTruncated] = createSignal(false)
+  const [loadingPatch, setLoadingPatch] = createSignal(false)
+  const [patchError, setPatchError] = createSignal("")
   const [detailHeight, setDetailHeight] = createSignal(0)
   const [error, setError] = createSignal("")
   let generation = 0
   let branchRequest = 0
   let filesRequest = 0
   let diffRequest = 0
+  let patchRequest = 0
   let detailObserver: ResizeObserver | undefined
 
   const graph = createMemo(() => layoutGraph(commits()))
@@ -225,6 +375,7 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
     () => files().find((file) => file.path === selectedFile()) ?? null,
   )
   const diffLines = createMemo(() => highlightPatch(diff(), selectedFileChange()?.path ?? ""))
+  const patchLines = createMemo(() => highlightPatch(patch(), ""))
 
   function observeDetail(element: HTMLElement) {
     detailObserver?.disconnect()
@@ -696,6 +847,38 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
       })
   })
 
+  createEffect(() => {
+    const commit = selectedCommit()
+    const directory = props.session.directory
+    const full = patchMode()
+    const request = ++patchRequest
+
+    setPatch("")
+    setPatchTruncated(false)
+    setPatchError("")
+    if (!commit || !full) {
+      setLoadingPatch(false)
+      return
+    }
+
+    setLoadingPatch(true)
+    void ctx.client.rpc(GitGraphRpc)
+      .commitPatch({ directory, hash: commit.hash })
+      .then((result) => {
+        if (request !== patchRequest) return
+        setPatch(result.patch)
+        setPatchTruncated(result.truncated)
+      })
+      .catch((cause: unknown) => {
+        if (request === patchRequest) {
+          setPatchError(cause instanceof Error ? cause.message : String(cause))
+        }
+      })
+      .finally(() => {
+        if (request === patchRequest) setLoadingPatch(false)
+      })
+  })
+
   const shortHash = (hash: string) => hash.slice(0, 7)
   const commitDate = (timestamp: number) => new Date(timestamp * 1000).toLocaleString()
 
@@ -704,6 +887,7 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
   }
 
   function activateFile(file: GitFileChange) {
+    setPatchMode(false)
     setSelectedFile((current) => (current === file.path ? null : file.path))
   }
 
@@ -1173,6 +1357,16 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
                                   <span style={{ color: "#da1e28" }}>−{fileStats().deletions}</span>
                                 </span>
                               </Show>
+                              <ctx.ui.Button
+                                size="small"
+                                disabled={loadingFiles() || filesError() !== "" || files().length === 0}
+                                onClick={() => {
+                                  setSelectedFile(null)
+                                  setPatchMode((value) => !value)
+                                }}
+                              >
+                                {patchMode() ? ctx.t("panel.perFileDiff") : ctx.t("panel.fullPatch")}
+                              </ctx.ui.Button>
                             </div>
                             <Show
                               when={!loadingFiles()}
@@ -1271,133 +1465,31 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
                             </Show>
                             <Show when={selectedFileChange()}>
                               {(file) => (
-                                <div
-                                  style={{
-                                    display: "flex",
-                                    "flex-direction": "column",
-                                    "border-radius": "4px",
-                                    border: "1px solid rgba(127, 127, 127, 0.25)",
-                                    overflow: "hidden",
-                                  }}
-                                >
-                                  <div
-                                    style={{
-                                      display: "flex",
-                                      "align-items": "center",
-                                      gap: "6px",
-                                      padding: "4px 6px",
-                                      "background-color": "rgba(127, 127, 127, 0.12)",
-                                      "font-size": "11px",
-                                    }}
-                                  >
-                                    <strong
-                                      style={{
-                                        flex: 1,
-                                        "text-overflow": "ellipsis",
-                                        "white-space": "nowrap",
-                                        overflow: "hidden",
-                                      }}
-                                    >
-                                      {file().previousPath ? `${file().previousPath} → ${file().path}` : file().path}
-                                    </strong>
-                                    <button
-                                      type="button"
-                                      onClick={() => setSelectedFile(null)}
-                                      style={{
-                                        padding: 0,
-                                        border: "none",
-                                        background: "none",
-                                        color: "inherit",
-                                        cursor: "pointer",
-                                        "font-size": "11px",
-                                        opacity: 0.7,
-                                      }}
-                                    >
-                                      {ctx.t("panel.closeDiff")}
-                                    </button>
-                                  </div>
-                                  <Show
-                                    when={!loadingDiff()}
-                                    fallback={
-                                      <span style={{ padding: "6px", "font-size": "11px", opacity: 0.65 }}>
-                                        {ctx.t("panel.loadingDiff")}
-                                      </span>
-                                    }
-                                  >
-                                    <Show
-                                      when={!diffError()}
-                                      fallback={
-                                        <span role="alert" style={{ padding: "6px", "font-size": "11px", color: "#da1e28" }}>
-                                          {diffError()}
-                                        </span>
-                                      }
-                                    >
-                                      <Show
-                                        when={!diffBinary()}
-                                        fallback={
-                                          <span style={{ padding: "6px", "font-size": "11px", opacity: 0.65 }}>
-                                            {ctx.t("panel.binaryDiff")}
-                                          </span>
-                                        }
-                                      >
-                                        <Show
-                                          when={diff().length > 0}
-                                          fallback={
-                                            <span style={{ padding: "6px", "font-size": "11px", opacity: 0.65 }}>
-                                              {ctx.t("panel.noDiff")}
-                                            </span>
-                                          }
-                                        >
-                                          <div
-                                            style={{
-                                              "max-height": "320px",
-                                              overflow: "auto",
-                                              "font-family": "ui-monospace, SFMono-Regular, Menlo, monospace",
-                                              "font-size": "10px",
-                                              "line-height": 1.45,
-                                              "tab-size": 2,
-                                            }}
-                                          >
-                                            <For each={diffLines()}>
-                                              {(line) => (
-                                                <div
-                                                  style={{
-                                                    padding: "0 6px",
-                                                    "white-space": "pre",
-                                                    ...diffLineStyle(line.kind),
-                                                  }}
-                                                >
-                                                  <Show when={line.prefix.length > 0}>
-                                                    <span style={diffPrefixStyle(line.kind)}>{line.prefix}</span>
-                                                  </Show>
-                                                  <For each={line.tokens}>
-                                                    {(token) => (
-                                                      <span
-                                                        style={{
-                                                          color: TOKEN_COLORS[token.kind],
-                                                          "font-style": token.kind === "comment" ? "italic" : undefined,
-                                                        }}
-                                                      >
-                                                        {token.text}
-                                                      </span>
-                                                    )}
-                                                  </For>
-                                                  <Show when={line.tokens.length === 0}>{"\u00a0"}</Show>
-                                                </div>
-                                              )}
-                                            </For>
-                                          </div>
-                                          <Show when={diffTruncated()}>
-                                            <span style={{ padding: "4px 6px", "font-size": "10px", opacity: 0.65 }}>
-                                              {ctx.t("panel.diffTruncated")}
-                                            </span>
-                                          </Show>
-                                        </Show>
-                                      </Show>
-                                    </Show>
-                                  </Show>
-                                </div>
+                                <DiffView
+                                  title={
+                                    file().previousPath
+                                      ? `${file().previousPath} → ${file().path}`
+                                      : file().path
+                                  }
+                                  lines={diffLines()}
+                                  binary={diffBinary()}
+                                  truncated={diffTruncated()}
+                                  loading={loadingDiff()}
+                                  error={diffError()}
+                                  onClose={() => setSelectedFile(null)}
+                                />
                               )}
+                            </Show>
+                            <Show when={patchMode()}>
+                              <DiffView
+                                title={`${ctx.t("panel.fullPatch")} · ${shortHash(selectedCommit()?.hash ?? "")}`}
+                                lines={patchLines()}
+                                binary={false}
+                                truncated={patchTruncated()}
+                                loading={loadingPatch()}
+                                error={patchError()}
+                                onClose={() => setPatchMode(false)}
+                              />
                             </Show>
                           </div>
                           <strong style={{ "margin-top": "2px" }}>{ctx.t("panel.containingBranches")}</strong>
