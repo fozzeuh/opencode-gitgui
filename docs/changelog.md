@@ -536,6 +536,40 @@ a time.
   and cherry-pick continuation no longer depend on a runner's global Git
   configuration, which was missing in GitHub Actions.
 
+## Packaging and npm publication — 2026-11-10
+
+The plugin was installable only from a local directory, which meant every user
+had to clone the repository and build the GUI bundle by hand. Publishing it as
+an npm package makes the documented installation `plugins:
+["opencode-git-graph-gui"]`.
+
+- Renamed the package from `opencode-git-graph` to `opencode-git-graph-gui`. The
+  original name is already published on npm by another project (a TUI plugin),
+  so reusing it was impossible. The plugin id stays `git-graph`, which keeps the
+  panel key `git-graph:graph` and the stored tab ids unchanged for existing
+  local setups.
+- Removed `"private": true`, which made `npm publish` refuse the package.
+- Added npm metadata: `repository`, `homepage`, `bugs`, and `keywords`.
+- Added a `prepack` script that runs `npm run build`. `dist/` is ignored by Git,
+  so without it a tarball could ship without `dist/gui-experimental.cjs` and the
+  panel would silently never load in Desktop.
+- Added `prepublishOnly: npm run check`, so a publish from a dirty or broken tree
+  fails before anything reaches the registry.
+- Relaxed the `@opencode/plugin` dependency from the exact `2.2.5` to `^2.2.5`,
+  so an installed copy is not pinned to a version the user's OpenCode release
+  may have left behind.
+- Added the missing `LICENSE` file; `package.json` already declared MIT.
+- Excluded `src/tests` from the published tarball. The unit tests are not needed
+  at runtime and added 57 kB plus a `vitest` import to every install; the package
+  now ships 19 files and 55 kB instead of 27 files and 64 kB.
+- Documented the npm installation path, kept the local-directory path for
+  development, and added a publishing procedure that calls out the tarball
+  contents, versioning, and testing the published package rather than a
+  workspace link.
+
+No runtime behavior changed: the server part, RPC contract, and GUI bundle are
+byte-for-byte the same apart from the dependency range.
+
 ## Current status against the original brief
 
 | Original feature | Status |

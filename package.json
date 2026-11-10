@@ -1,11 +1,25 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "name": "opencode-git-graph",
+  "name": "opencode-git-graph-gui",
   "version": "0.1.0",
-  "private": true,
   "description": "Native Git graph explorer for OpenCode Desktop (V2 GUI plugin)",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fozzeuh/opencode-gitgui.git"
+  },
+  "homepage": "https://github.com/fozzeuh/opencode-gitgui#readme",
+  "bugs": {
+    "url": "https://github.com/fozzeuh/opencode-gitgui/issues"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "git",
+    "git-graph",
+    "gui"
+  ],
   "engines": {
     "node": ">=22.12.0"
   },
@@ -16,6 +30,7 @@
   },
   "files": [
     "src",
+    "!src/tests",
     "dist"
   ],
   "scripts": {
@@ -25,10 +40,12 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint .",
-    "check": "npm run typecheck && npm run lint && npm run test && npm run build"
+    "check": "npm run typecheck && npm run lint && npm run test && npm run build",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run check"
   },
   "dependencies": {
-    "@opencode/plugin": "2.2.5"
+    "@opencode/plugin": "^2.2.5"
   },
   "peerDependencies": {
     "effect": "^4.0.6",
