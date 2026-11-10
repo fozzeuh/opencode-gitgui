@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
   "name": "opencode-git-graph-gui",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Native Git graph explorer for OpenCode Desktop (V2 GUI plugin)",
   "type": "module",
   "license": "MIT",

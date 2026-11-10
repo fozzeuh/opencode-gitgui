@@ -23,7 +23,7 @@ import {
 } from "./git/reader"
 import { GitGraphRpc } from "./rpc"
 
-const VERSION = "0.1.0"
+const VERSION = "0.1.1"
 
 export default Plugin.define({
   id: "git-graph",
