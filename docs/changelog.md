@@ -486,6 +486,29 @@ conflict, without leaving the app.
   and revert, plus rejection of unsupported operations and actions. The suite
   now has 59 tests.
 
+## Integration coverage for edge cases — 2026-11-10
+
+Goal: lock the reader's behaviour on the repository shapes the brief calls out,
+and prove that bad input fails instead of returning partial data.
+
+- **Empty repository**: `readHistory` returns the repository root with no
+  commits, `readBranches` reports the unborn branch with no `HEAD`, and
+  `readTags` returns an empty list. The panel therefore shows its empty state
+  instead of an error.
+- **Multi-parent merge**: an octopus merge keeps all three parents in the
+  history record, and its file list is still compared against the first parent,
+  as documented.
+- **Commit reachable only from a tag**: after its branch is deleted, the commit
+  stays in the `--all` history, its tag is listed, and its files remain
+  readable.
+- **Large history**: a 320-commit repository is imported with `git fast-import`;
+  the first page returns 300 commits, the second returns the remaining 20, and
+  an oversized limit is clamped to 300.
+- **Failures**: a non-repository directory, a missing directory, a relative
+  path, an oversized query, a query with a newline, an option-like branch name,
+  an abbreviated commit hash, and a NUL path all reject with an error.
+- The suite now has 64 tests and `npm run check` passes.
+
 ## Current status against the original brief
 
 | Original feature | Status |
@@ -507,5 +530,7 @@ conflict, without leaving the app.
 
 ## Next steps
 
-1. Remaining integration tests for empty repositories, multi-parent merges,
-   orphaned commits, large histories, and command failures.
+1. Optional: show a whole commit patch in one view. The detail card currently
+   shows one changed file at a time.
+2. Branch deletion, tag management, merge, rebase, stash, and remote
+   configuration remain out of scope and are documented as such.

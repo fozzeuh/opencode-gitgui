@@ -275,6 +275,9 @@ is already checked once by its pull request. The workflow uses Node.js 22.12 and
   app's own confirmation and select components.
 - Branch deletion, tag management, merge, rebase, stash, and remote
   configuration remain out of scope.
+- An empty repository shows the empty state; the panel does not create an
+  initial commit. A commit reachable only from a tag stays visible because
+  history is read from every ref.
 
 ## Project structure
 
