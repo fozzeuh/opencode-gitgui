@@ -463,6 +463,29 @@ side panel tab.
 - `fallback: true` is kept so the tab is selected when it is opened.
 - The narrow-screen `mobile` menu entry is unchanged.
 
+## Conflict recovery — 2026-11-10
+
+Goal: let the user finish or cancel a cherry-pick or revert that stopped on a
+conflict, without leaving the app.
+
+- New `controlOperation` server action and `controlOperation` RPC method take a
+  directory, an operation (`cherry-pick` or `revert`), and an action (`abort` or
+  `continue`). Both values are validated before Git runs.
+- `merge` and `rebase` are refused on purpose: this plugin never starts them, so
+  it does not own their recovery.
+- Continue runs `git cherry-pick --continue --no-edit` or
+  `git revert --continue --no-edit`, so a GUI-spawned process never blocks on an
+  editor. Abort runs the matching `--abort`.
+- The panel shows **Continue** and **Abort** buttons beside the in-progress
+  marker, only for the two supported operations. Continue explains that every
+  conflict must be resolved and staged first. Abort is destructive and its
+  confirmation states that the partial result is discarded.
+- After either action, the panel refreshes history, branches, tags, status, and
+  remotes, so the marker disappears and conflicts clear.
+- New integration tests cover aborting and continuing a conflicted cherry-pick
+  and revert, plus rejection of unsupported operations and actions. The suite
+  now has 59 tests.
+
 ## Current status against the original brief
 
 | Original feature | Status |
@@ -479,11 +502,10 @@ side panel tab.
 | Filter by branch | Done: local and remote branches |
 | Git actions (checkout, cherry-pick, revert, reset, push, fetch, pull) | Done: branch and commit checkout, cherry-pick, revert, soft/mixed/hard reset, push to a configured remote, fetch, and fast-forward pull |
 | Confirmation flows for destructive actions | Done: every write action confirms; dirty checkout and detached checkout use a destructive confirmation; reset hard adds a select step and a stronger warning |
+| Conflict recovery | Done: continue or abort a cherry-pick or revert left in progress; merge and rebase recovery are not offered |
 | Closable tab and launcher | Done: closable tab opened from the side panel menu or the command palette, with a compact close button and a recently-closed entry |
 
 ## Next steps
 
-1. Error and conflict handling hardening: explicit abort/continue for a
-   cherry-pick or revert left in progress, and clearer conflict guidance.
-2. Remaining integration tests for empty repositories, multi-parent merges,
+1. Remaining integration tests for empty repositories, multi-parent merges,
    orphaned commits, large histories, and command failures.

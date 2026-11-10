@@ -1,7 +1,12 @@
 import type { MountedSession, UiMenuEntry } from "@opencode/plugin/gui"
 import { usePlugin } from "@opencode/plugin/gui"
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js"
-import type { GitOperation, GitStatus, ResetMode } from "../git/actions"
+import type {
+  ControllableOperation,
+  GitOperation,
+  GitStatus,
+  ResetMode,
+} from "../git/actions"
 import type { GitBranch, GitCommit, GitFileChange, GitFileStatus, GitTag } from "../git/reader"
 import { layoutGraph } from "../graph/layout"
 import { edgePath } from "../graph/render"
@@ -54,6 +59,11 @@ const RESET_DESCRIPTION_KEYS: Record<ResetMode, string> = {
   soft: "panel.resetSoftDescription",
   mixed: "panel.resetMixedDescription",
   hard: "panel.resetHardDescription",
+}
+
+/** Whether the in-progress operation is one this panel can abort or continue. */
+function isControllable(operation: GitOperation): operation is ControllableOperation {
+  return operation === "cherry-pick" || operation === "revert"
 }
 const TOKEN_COLORS: Record<TokenKind, string | undefined> = {
   plain: undefined,
@@ -481,6 +491,49 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
     })
   }
 
+  async function continueOperationAction(operation: GitOperation) {
+    if (!isControllable(operation)) return
+    const confirmed = await ctx.dialogs.confirm({
+      title: `${ctx.t("panel.continueOperation")} · ${operationLabel(operation)}`,
+      description: ctx.t("panel.continueDescription"),
+      confirm: ctx.t("panel.continueOperation"),
+    })
+    if (!confirmed) return
+    await runAction(
+      "continue-operation",
+      `${ctx.t("panel.continueOperation")} ${operationLabel(operation)}`,
+      async () => {
+        await ctx.client.rpc(GitGraphRpc).controlOperation({
+          directory: props.session.directory,
+          operation,
+          action: "continue",
+        })
+      },
+    )
+  }
+
+  async function abortOperationAction(operation: GitOperation) {
+    if (!isControllable(operation)) return
+    const confirmed = await ctx.dialogs.confirm({
+      title: `${ctx.t("panel.abortOperation")} · ${operationLabel(operation)}`,
+      description: ctx.t("panel.abortDescription"),
+      confirm: ctx.t("panel.abortConfirm"),
+      danger: true,
+    })
+    if (!confirmed) return
+    await runAction(
+      "abort-operation",
+      `${ctx.t("panel.abortOperation")} ${operationLabel(operation)}`,
+      async () => {
+        await ctx.client.rpc(GitGraphRpc).controlOperation({
+          directory: props.session.directory,
+          operation,
+          action: "abort",
+        })
+      },
+    )
+  }
+
   async function loadMore() {
     if (loadingMore() || !hasMore()) return
     const request = generation
@@ -795,7 +848,31 @@ export function GitGraphPanel(props: { readonly session: MountedSession }) {
                 </Show>
                 <Show when={current().inProgress}>
                   {(operation) => (
-                    <span style={{ color: "#f1c21b" }}>· {operationLabel(operation())}</span>
+                    <>
+                      <span style={{ color: "#f1c21b" }}>· {operationLabel(operation())}</span>
+                      <Show when={isControllable(operation()) ? operation() : null}>
+                        {(controllable) => (
+                          <>
+                            <ctx.ui.Button
+                              size="small"
+                              disabled={actionBusy() !== null}
+                              busy={actionBusy() === "continue-operation"}
+                              onClick={() => void continueOperationAction(controllable())}
+                            >
+                              {ctx.t("panel.continueOperation")}
+                            </ctx.ui.Button>
+                            <ctx.ui.Button
+                              size="small"
+                              disabled={actionBusy() !== null}
+                              busy={actionBusy() === "abort-operation"}
+                              onClick={() => void abortOperationAction(controllable())}
+                            >
+                              {ctx.t("panel.abortOperation")}
+                            </ctx.ui.Button>
+                          </>
+                        )}
+                      </Show>
+                    </>
                   )}
                 </Show>
               </div>

@@ -3,6 +3,7 @@ import {
   checkoutBranch,
   checkoutCommit,
   cherryPick,
+  controlOperation,
   pull,
   push,
   readRemotes,
@@ -83,6 +84,10 @@ export default Plugin.define({
       },
       pull: async (input, call) => {
         await pull(input.directory, call.signal)
+        return { ok: true }
+      },
+      controlOperation: async (input, call) => {
+        await controlOperation(input.directory, input.operation, input.action, call.signal)
         return { ok: true }
       },
     })

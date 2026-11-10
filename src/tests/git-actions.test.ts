@@ -7,6 +7,7 @@ import {
   checkoutBranch,
   checkoutCommit,
   cherryPick,
+  controlOperation,
   parseGitStatus,
   pull,
   push,
@@ -175,6 +176,133 @@ describe("Git action integration", () => {
       expect(status.inProgress).toBe("cherry-pick")
       expect(status.conflicted).toBeGreaterThan(0)
       expect(status.clean).toBe(false)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("aborts a conflicted cherry-pick and restores the branch", async () => {
+    const directory = temporaryRepository("git-graph-abort-cherry-pick-")
+
+    try {
+      git(directory, ["init", "-b", "main"])
+      writeFileSync(join(directory, "base.txt"), "base\n")
+      git(directory, ["add", "base.txt"])
+      git(directory, ["commit", "-m", "Base commit"])
+      git(directory, ["checkout", "-b", "feature"])
+      writeFileSync(join(directory, "base.txt"), "feature\n")
+      git(directory, ["commit", "-am", "Feature change"])
+      const featureHash = gitOut(directory, ["rev-parse", "HEAD"])
+      git(directory, ["checkout", "main"])
+      writeFileSync(join(directory, "base.txt"), "main\n")
+      git(directory, ["commit", "-am", "Main change"])
+      const mainHash = gitOut(directory, ["rev-parse", "HEAD"])
+
+      await expect(cherryPick(directory, featureHash)).rejects.toThrow()
+      expect((await readStatus(directory)).inProgress).toBe("cherry-pick")
+
+      await controlOperation(directory, "cherry-pick", "abort")
+
+      const status = await readStatus(directory)
+      expect(status.inProgress).toBeNull()
+      expect(status.clean).toBe(true)
+      expect(gitOut(directory, ["rev-parse", "HEAD"])).toBe(mainHash)
+      expect(gitOut(directory, ["show", "HEAD:base.txt"])).toBe("main")
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("continues a conflicted cherry-pick once the conflict is resolved", async () => {
+    const directory = temporaryRepository("git-graph-continue-cherry-pick-")
+
+    try {
+      git(directory, ["init", "-b", "main"])
+      writeFileSync(join(directory, "base.txt"), "base\n")
+      git(directory, ["add", "base.txt"])
+      git(directory, ["commit", "-m", "Base commit"])
+      git(directory, ["checkout", "-b", "feature"])
+      writeFileSync(join(directory, "base.txt"), "feature\n")
+      git(directory, ["commit", "-am", "Feature change"])
+      const featureHash = gitOut(directory, ["rev-parse", "HEAD"])
+      git(directory, ["checkout", "main"])
+      writeFileSync(join(directory, "base.txt"), "main\n")
+      git(directory, ["commit", "-am", "Main change"])
+
+      await expect(cherryPick(directory, featureHash)).rejects.toThrow()
+      writeFileSync(join(directory, "base.txt"), "resolved\n")
+      git(directory, ["add", "base.txt"])
+
+      await controlOperation(directory, "cherry-pick", "continue")
+
+      const status = await readStatus(directory)
+      expect(status.inProgress).toBeNull()
+      expect(status.clean).toBe(true)
+      expect(gitOut(directory, ["log", "-1", "--format=%s"])).toBe("Feature change")
+      expect(gitOut(directory, ["show", "HEAD:base.txt"])).toBe("resolved")
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("aborts and continues a conflicted revert", async () => {
+    const directory = temporaryRepository("git-graph-revert-conflict-")
+
+    try {
+      git(directory, ["init", "-b", "main"])
+      writeFileSync(join(directory, "base.txt"), "base\n")
+      git(directory, ["add", "base.txt"])
+      git(directory, ["commit", "-m", "Base commit"])
+      git(directory, ["checkout", "-b", "feature"])
+      writeFileSync(join(directory, "base.txt"), "feature\n")
+      git(directory, ["commit", "-am", "Feature change"])
+      const featureHash = gitOut(directory, ["rev-parse", "HEAD"])
+      git(directory, ["checkout", "main"])
+      writeFileSync(join(directory, "base.txt"), "main\n")
+      git(directory, ["commit", "-am", "Main change"])
+      const mainHash = gitOut(directory, ["rev-parse", "HEAD"])
+
+      await expect(revert(directory, featureHash)).rejects.toThrow()
+      expect((await readStatus(directory)).inProgress).toBe("revert")
+
+      await controlOperation(directory, "revert", "abort")
+      const aborted = await readStatus(directory)
+      expect(aborted.inProgress).toBeNull()
+      expect(aborted.clean).toBe(true)
+      expect(gitOut(directory, ["rev-parse", "HEAD"])).toBe(mainHash)
+
+      await expect(revert(directory, featureHash)).rejects.toThrow()
+      writeFileSync(join(directory, "base.txt"), "base\n")
+      git(directory, ["add", "base.txt"])
+
+      await controlOperation(directory, "revert", "continue")
+
+      const status = await readStatus(directory)
+      expect(status.inProgress).toBeNull()
+      expect(status.clean).toBe(true)
+      expect(gitOut(directory, ["log", "-1", "--format=%s"])).toContain("Revert")
+      expect(gitOut(directory, ["show", "HEAD:base.txt"])).toBe("base")
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("refuses to control an operation it does not start", async () => {
+    const directory = temporaryRepository("git-graph-control-validation-")
+
+    try {
+      git(directory, ["init", "-b", "main"])
+      writeFileSync(join(directory, "sample.txt"), "first\n")
+      git(directory, ["add", "sample.txt"])
+      git(directory, ["commit", "-m", "Initial commit"])
+
+      await expect(
+        controlOperation(directory, "merge" as unknown as "cherry-pick", "abort"),
+      ).rejects.toThrow("not supported")
+      await expect(
+        controlOperation(directory, "cherry-pick", "invalid" as unknown as "abort"),
+      ).rejects.toThrow("invalid")
+      await expect(controlOperation(directory, "cherry-pick", "abort")).rejects.toThrow()
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }

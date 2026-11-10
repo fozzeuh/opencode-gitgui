@@ -204,6 +204,16 @@ export const GitGraphRpc = Rpc.define({
       input: Schema.toStandardSchemaV1(RepositoryInput),
       output: Schema.toStandardSchemaV1(ActionOutput),
     },
+    controlOperation: {
+      input: Schema.toStandardSchemaV1(
+        Schema.Struct({
+          directory: Schema.String,
+          operation: Schema.Literals(["cherry-pick", "revert"]),
+          action: Schema.Literals(["abort", "continue"]),
+        }),
+      ),
+      output: Schema.toStandardSchemaV1(ActionOutput),
+    },
   },
   events: {},
 })

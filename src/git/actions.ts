@@ -10,6 +10,9 @@ import {
 
 export type GitOperation = "merge" | "cherry-pick" | "revert" | "rebase"
 export type ResetMode = "soft" | "mixed" | "hard"
+/** Operations this plugin starts, and can therefore abort or continue. */
+export type ControllableOperation = "cherry-pick" | "revert"
+export type OperationAction = "abort" | "continue"
 
 export interface GitStatus {
   /** True when no staged, unstaged, untracked, or conflicted entry exists. */
@@ -185,7 +188,33 @@ export async function revert(
   await runGit(["revert", "--no-edit", commitHash(hash)], cwd, signal)
 }
 
+/**
+ * Abort or continue a cherry-pick or revert left in progress after a conflict.
+ * Merge and rebase are refused: this plugin never starts them, so it does not
+ * own their recovery. `--no-edit` keeps the continue path from opening an
+ * editor that a GUI-spawned process could never close.
+ */
+export async function controlOperation(
+  directory: string,
+  operation: ControllableOperation,
+  action: OperationAction,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!CONTROLLABLE_OPERATIONS.includes(operation)) {
+    throw new Error("The in-progress operation is not supported.")
+  }
+  if (!OPERATION_ACTIONS.includes(action)) {
+    throw new Error("The operation action is invalid.")
+  }
+  const cwd = repositoryDirectory(directory)
+  const args = [operation, action === "abort" ? "--abort" : "--continue"]
+  if (action === "continue") args.push("--no-edit")
+  await runGit(args, cwd, signal)
+}
+
 const RESET_MODES: readonly ResetMode[] = ["soft", "mixed", "hard"]
+const CONTROLLABLE_OPERATIONS: readonly ControllableOperation[] = ["cherry-pick", "revert"]
+const OPERATION_ACTIONS: readonly OperationAction[] = ["abort", "continue"]
 
 export async function reset(
   directory: string,

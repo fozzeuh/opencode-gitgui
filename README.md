@@ -59,6 +59,11 @@ syntax-highlighted diffs and the confirmed Git action layer:
 - After an action, the graph, branches, tags, status, and remotes refresh. On
   failure the Git error is shown and the status refreshes too, so conflicts and
   in-progress operations are visible immediately.
+- When a cherry-pick or revert stops on a conflict, the panel offers **Continue**
+  and **Abort**. Continue finishes the operation once every conflict is resolved
+  and staged; Abort is destructive and discards the partial result. Merge and
+  rebase recovery are not offered because the panel never starts those
+  operations.
 - The panel is a regular closable side tab. Open it from the side panel `+` menu
   or the command palette; closing it removes it from the strip, and it can be
   restored from the host's recently-closed list.
@@ -101,6 +106,7 @@ prunes refs.
 | Remotes | `git remote` through the `remotes` RPC |
 | Checkout | `git checkout <branch>` or `git checkout --detach <hash>` through typed RPC |
 | Cherry-pick / revert | `git cherry-pick <hash>` and `git revert --no-edit <hash>` |
+| Conflict recovery | `git cherry-pick\|revert --abort` and `--continue --no-edit` through typed RPC |
 | Reset | `git reset --soft`, `--mixed`, or `--hard` with a validated mode |
 | Push / pull | `git push <remote> refs/heads/<branch>:refs/heads/<branch>` and `git pull --ff-only` |
 | Action confirmations | `ctx.dialogs.confirm`, `ctx.dialogs.select`, and `ctx.dialogs.alert` |
@@ -257,8 +263,9 @@ is already checked once by its pull request. The workflow uses Node.js 22.12 and
   error is shown; the panel warns first when the working tree is dirty.
 - Cherry-pick and revert stop on conflict, leaving the operation in progress.
   The status RPC reports the conflict count and the in-progress operation
-  instead of hiding the failure. The panel does not yet offer an explicit
-  `--abort` or `--continue` control.
+  instead of hiding the failure. The panel offers **Continue** (after conflicts
+  are resolved and staged) and a destructive **Abort** for those two operations.
+  Merge and rebase recovery are not exposed.
 - Push and pull contact the network only after an explicit user request and use
   the same 120-second timeout as fetch. Pull is fast-forward only and fails on a
   diverged branch. Push never forces.
@@ -281,7 +288,7 @@ src/
 ├── git/
 │   ├── exec.ts       # safe Git runner and input validation
 │   ├── reader.ts     # Git commands, history reading, and parsing
-│   └── actions.ts    # status, checkout, cherry-pick, revert, reset, push, pull
+│   └── actions.ts    # status, checkout, cherry-pick, revert, reset, push, pull, recovery
 ├── graph/
 │   ├── layout.ts     # graph lane and edge layout
 │   └── render.ts     # SVG edge paths and merge arrow direction

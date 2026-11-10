@@ -92,6 +92,13 @@ export default Plugin.define({
       "panel.inProgressCherryPick": "cherry-pick in progress",
       "panel.inProgressRevert": "revert in progress",
       "panel.inProgressRebase": "rebase in progress",
+      "panel.continueOperation": "Continue",
+      "panel.abortOperation": "Abort",
+      "panel.continueDescription":
+        "Finish the operation with the resolved conflicts. Resolve and stage every conflicted file first; Git refuses to continue while a conflict remains.",
+      "panel.abortDescription":
+        "Stop the operation and return the branch to its state before it started. The partial result and its conflict resolutions are discarded.",
+      "panel.abortConfirm": "Abort operation",
       "panel.actionComplete": "Done",
       "panel.actionFailed": "Action failed",
       "command.open": "Git Graph: Open panel",
