@@ -47,26 +47,76 @@ export default Plugin.define({
       "panel.noDiff": "No textual changes to display.",
       "panel.binaryDiff": "Binary file — no text diff available.",
       "panel.diffTruncated": "Diff truncated because it is too large.",
+      "panel.fullPatch": "Full patch",
+      "panel.perFileDiff": "Per-file view",
       "panel.closeDiff": "Close",
       "panel.binary": "Binary",
       "panel.containingBranches": "Current branches containing this commit",
       "panel.noContainingBranches": "No current branch contains this commit.",
       "panel.checkingBranches": "Checking branch membership…",
       "panel.loadMore": "Load more commits",
+      "panel.actions": "Actions",
+      "panel.checkout": "Checkout",
+      "panel.checkoutBranchAction": "Checkout branch…",
+      "panel.checkoutCommit": "Checkout commit",
+      "panel.checkoutDescription": "Switch the working tree to this branch.",
+      "panel.checkoutCommitDescription":
+        "Check out this commit in detached HEAD state; new commits will not belong to a branch.",
+      "panel.checkoutDirty":
+        "The working tree has uncommitted changes. Checkout may fail or affect them; commit or stash them first.",
+      "panel.noLocalBranches": "No other local branch to check out.",
+      "panel.cherryPick": "Cherry-pick",
+      "panel.cherryPickDescription": "Apply this commit on top of the current branch.",
+      "panel.revert": "Revert",
+      "panel.revertDescription": "Create a new commit that reverses this commit.",
+      "panel.reset": "Reset",
+      "panel.resetTitle": "Reset the current branch",
+      "panel.resetSoft": "Soft",
+      "panel.resetMixed": "Mixed",
+      "panel.resetHard": "Hard",
+      "panel.resetSoftDescription": "Move HEAD only; keep staged and working tree changes.",
+      "panel.resetMixedDescription": "Move HEAD and unstage changes; keep the working tree.",
+      "panel.resetHardDescription": "Move HEAD and discard staged and working tree changes.",
+      "panel.resetHardWarning": "This discards all uncommitted changes and cannot be undone.",
+      "panel.resetHardConfirm": "Reset hard",
+      "panel.push": "Push",
+      "panel.pull": "Pull",
+      "panel.pushNeedsBranch": "Check out a branch before pushing.",
+      "panel.pushNoRemotes": "No configured remote to push to.",
+      "panel.pushSelectRemote": "Push to remote",
+      "panel.pushDescription": "Send the current branch to the selected remote.",
+      "panel.pullDescription":
+        "Fast-forward the current branch from its upstream. Fails if the branch has diverged.",
+      "panel.workingTreeClean": "Working tree clean",
+      "panel.uncommittedChanges": "uncommitted changes",
+      "panel.conflicts": "conflicts",
+      "panel.inProgressMerge": "merge in progress",
+      "panel.inProgressCherryPick": "cherry-pick in progress",
+      "panel.inProgressRevert": "revert in progress",
+      "panel.inProgressRebase": "rebase in progress",
+      "panel.continueOperation": "Continue",
+      "panel.abortOperation": "Abort",
+      "panel.continueDescription":
+        "Finish the operation with the resolved conflicts. Resolve and stage every conflicted file first; Git refuses to continue while a conflict remains.",
+      "panel.abortDescription":
+        "Stop the operation and return the branch to its state before it started. The partial result and its conflict resolutions are discarded.",
+      "panel.abortConfirm": "Abort operation",
+      "panel.actionComplete": "Done",
+      "panel.actionFailed": "Action failed",
       "command.open": "Git Graph: Open panel",
       "menu.open": "Git Graph",
     },
   },
   setup(ctx) {
-    // Pinned for phase 1 so the tab is visible as soon as a session is open.
-    // It becomes a closable launcher in the GUI phase.
+    // The tab is opened from the side panel menu or the command palette and
+    // can be closed again. `list` returns it only while the session stores it
+    // open, so a closed tab leaves the strip instead of staying pinned.
     const tab: PanelTab = {
       id: PANEL_ID,
       get title() {
         return ctx.t("panel.title")
       },
-      pinned: true,
-      closable: false,
+      closable: "compact",
       fallback: true,
     }
 
@@ -81,8 +131,9 @@ export default Plugin.define({
         kind: "menu",
         icon: "branch",
       },
-      list: () => [tab],
+      list: ({ open }) => (open.includes(PANEL_ID) ? [tab] : []),
       render: (props) => <GitGraphPanel session={props.session} />,
+      closed: () => ({ title: ctx.t("panel.title") }),
     })
 
     ctx.add(MenuItem, (): MenuItem => {

@@ -1,13 +1,15 @@
-import { spawn } from "node:child_process"
-import { isAbsolute, resolve } from "node:path"
+import {
+  commitHash,
+  NETWORK_TIMEOUT_MS,
+  repositoryDirectory,
+  runGit,
+  validBranchName,
+} from "./exec"
 
 const MAX_HISTORY = 300
 const MAX_SEARCH_LENGTH = 500
 const MAX_FILES = 500
 const MAX_PATCH = 256 * 1024
-const MAX_OUTPUT = 4 * 1024 * 1024
-const COMMAND_TIMEOUT_MS = 10_000
-const FETCH_TIMEOUT_MS = 120_000
 
 export type GitFileStatus =
   | "added"
@@ -59,84 +61,6 @@ export interface HistoryOptions {
   readonly query?: string
   /** Logical branch name to follow; null or omitted means every ref. */
   readonly branch?: string | null
-}
-
-function repositoryDirectory(directory: string): string {
-  if (!directory || directory.length > 4096 || directory.includes("\0") || !isAbsolute(directory)) {
-    throw new Error("The repository path must be a valid absolute path.")
-  }
-  return resolve(directory)
-}
-
-function runGit(
-  args: readonly string[],
-  cwd: string,
-  signal?: AbortSignal,
-  timeoutMs = COMMAND_TIMEOUT_MS,
-): Promise<string> {
-  return new Promise((resolvePromise, reject) => {
-    if (signal?.aborted) {
-      reject(new Error("The Git request was cancelled."))
-      return
-    }
-
-    const child = spawn("git", [...args], {
-      cwd,
-      shell: false,
-      stdio: ["ignore", "pipe", "pipe"],
-    })
-    const stdout: Buffer[] = []
-    const stderr: Buffer[] = []
-    let outputSize = 0
-    let errorSize = 0
-    let settled = false
-
-    const finish = (error?: Error, output?: string) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timeout)
-      signal?.removeEventListener("abort", abort)
-      if (error) reject(error)
-      else resolvePromise(output ?? "")
-    }
-
-    const abort = () => {
-      child.kill("SIGTERM")
-      finish(new Error("The Git request was cancelled."))
-    }
-
-    const timeout = setTimeout(() => {
-      child.kill("SIGTERM")
-      finish(new Error("The Git command exceeded the allowed time limit."))
-    }, timeoutMs)
-
-    signal?.addEventListener("abort", abort, { once: true })
-    child.stdout.on("data", (chunk: Buffer) => {
-      outputSize += chunk.length
-      if (outputSize > MAX_OUTPUT) {
-        child.kill("SIGTERM")
-        finish(new Error("Git output exceeds the maximum allowed size."))
-        return
-      }
-      stdout.push(chunk)
-    })
-    child.stderr.on("data", (chunk: Buffer) => {
-      if (errorSize >= 16_384) return
-      const remaining = 16_384 - errorSize
-      const kept = chunk.length > remaining ? chunk.subarray(0, remaining) : chunk
-      stderr.push(kept)
-      errorSize += kept.length
-    })
-    child.on("error", (error) => finish(new Error(`Unable to launch Git: ${error.message}`)))
-    child.on("close", (code) => {
-      if (code === 0) {
-        finish(undefined, Buffer.concat(stdout).toString("utf8"))
-        return
-      }
-      const detail = Buffer.concat(stderr).toString("utf8").trim()
-      finish(new Error(detail || `Git exited with code ${code ?? "unknown"}.`))
-    })
-  })
 }
 
 export function parseGitLog(output: string): GitCommit[] {
@@ -322,23 +246,6 @@ function normalizeQuery(value: string | undefined): string {
   return query
 }
 
-function validBranchName(value: string): string {
-  const name = value.trim()
-  if (
-    !name ||
-    name.length > 1024 ||
-    name.startsWith("-") ||
-    name.startsWith("/") ||
-    name.endsWith("/") ||
-    name.includes("..") ||
-    name.includes("@{") ||
-    /[\0\r\n ~^:?*[\\]/.test(name)
-  ) {
-    throw new Error("The branch name is invalid.")
-  }
-  return name
-}
-
 /** Resolve a logical branch label to a full local or remote ref. */
 async function resolveBranchRef(
   cwd: string,
@@ -461,7 +368,7 @@ export async function readTags(
 /** Fetch updates for every configured remote; this is only invoked on user request. */
 export async function fetchAll(directory: string, signal?: AbortSignal): Promise<void> {
   const cwd = repositoryDirectory(directory)
-  await runGit(["fetch", "--all"], cwd, signal, FETCH_TIMEOUT_MS)
+  await runGit(["fetch", "--all"], cwd, signal, NETWORK_TIMEOUT_MS)
 }
 
 export async function readBranchesContaining(
@@ -469,13 +376,11 @@ export async function readBranchesContaining(
   hash: string,
   signal?: AbortSignal,
 ): Promise<{ branches: GitBranch[] }> {
-  if (!/^[0-9a-f]{40,64}$/i.test(hash)) {
-    throw new Error("The commit hash is invalid.")
-  }
+  const commit = commitHash(hash)
   const cwd = repositoryDirectory(directory)
   const format = "%(refname)%00%(objectname)%00%(HEAD)%00"
   const output = await runGit(
-    ["for-each-ref", `--contains=${hash}`, `--format=${format}`, "refs/heads", "refs/remotes"],
+    ["for-each-ref", `--contains=${commit}`, `--format=${format}`, "refs/heads", "refs/remotes"],
     cwd,
     signal,
   )
@@ -503,13 +408,11 @@ export async function readCommitFiles(
   hash: string,
   signal?: AbortSignal,
 ): Promise<{ files: GitFileChange[]; truncated: boolean }> {
-  if (!/^[0-9a-f]{40,64}$/i.test(hash)) {
-    throw new Error("The commit hash is invalid.")
-  }
+  const commit = commitHash(hash)
   const cwd = repositoryDirectory(directory)
-  const firstParent = await firstParentOf(cwd, hash, signal)
+  const firstParent = await firstParentOf(cwd, commit, signal)
   const revisionArgs = ["diff-tree", "--no-commit-id", "-r", "-M"]
-  const revision = firstParent ? [firstParent, hash] : ["--root", hash]
+  const revision = firstParent ? [firstParent, commit] : ["--root", commit]
   const [statusOutput, statsOutput] = await Promise.all([
     runGit([...revisionArgs, "--name-status", "-z", ...revision], cwd, signal),
     runGit([...revisionArgs, "--numstat", "-z", ...revision], cwd, signal),
@@ -521,25 +424,7 @@ export async function readCommitFiles(
   return { files: files.slice(0, MAX_FILES), truncated: files.length > MAX_FILES }
 }
 
-export async function readCommitFileDiff(
-  directory: string,
-  hash: string,
-  path: string,
-  previousPath: string | null,
-  signal?: AbortSignal,
-): Promise<GitFileDiff> {
-  if (!/^[0-9a-f]{40,64}$/i.test(hash)) {
-    throw new Error("The commit hash is invalid.")
-  }
-  const filePath = commitPath(path)
-  const oldPath = previousPath === null ? null : commitPath(previousPath)
-  const cwd = repositoryDirectory(directory)
-  const firstParent = await firstParentOf(cwd, hash, signal)
-  const paths = oldPath && oldPath !== filePath ? [oldPath, filePath] : [filePath]
-  const args = firstParent
-    ? ["diff", "--no-color", "--unified=3", firstParent, hash, "--", ...paths]
-    : ["show", "--format=", "--no-color", "--unified=3", hash, "--", ...paths]
-  const output = await runGit(args, cwd, signal)
+function toFileDiff(output: string): GitFileDiff {
   const binary = /^Binary files .* differ$/m.test(output) || output.includes("GIT binary patch")
   const truncated = output.length > MAX_PATCH
   return {
@@ -547,4 +432,38 @@ export async function readCommitFileDiff(
     binary,
     truncated,
   }
+}
+
+export async function readCommitFileDiff(
+  directory: string,
+  hash: string,
+  path: string,
+  previousPath: string | null,
+  signal?: AbortSignal,
+): Promise<GitFileDiff> {
+  const commit = commitHash(hash)
+  const filePath = commitPath(path)
+  const oldPath = previousPath === null ? null : commitPath(previousPath)
+  const cwd = repositoryDirectory(directory)
+  const firstParent = await firstParentOf(cwd, commit, signal)
+  const paths = oldPath && oldPath !== filePath ? [oldPath, filePath] : [filePath]
+  const args = firstParent
+    ? ["diff", "--no-color", "--unified=3", firstParent, commit, "--", ...paths]
+    : ["show", "--format=", "--no-color", "--unified=3", commit, "--", ...paths]
+  return toFileDiff(await runGit(args, cwd, signal))
+}
+
+/** Read the whole patch of a commit, compared against its first parent. */
+export async function readCommitPatch(
+  directory: string,
+  hash: string,
+  signal?: AbortSignal,
+): Promise<GitFileDiff> {
+  const commit = commitHash(hash)
+  const cwd = repositoryDirectory(directory)
+  const firstParent = await firstParentOf(cwd, commit, signal)
+  const args = firstParent
+    ? ["diff", "--no-color", "--unified=3", firstParent, commit]
+    : ["show", "--format=", "--no-color", "--unified=3", commit]
+  return toFileDiff(await runGit(args, cwd, signal))
 }

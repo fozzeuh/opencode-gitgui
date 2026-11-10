@@ -9,8 +9,8 @@ panel and a typed RPC bridge between the SolidJS GUI and the server plugin.
 
 Phase 1 validated plugin loading, opening the panel, and RPC transport. Phase 2
 added repository reading and an interactive SVG graph. Phase 3 added commit file
-inspection. Phase 4 completed the read-only explorer. Phase 5 starts with
-syntax-highlighted diffs:
+inspection. Phase 4 completed the read-only explorer. Phase 5 adds
+syntax-highlighted diffs and the confirmed Git action layer:
 
 - Multi-branch history loaded 300 commits at a time, with a **Load more** button
   that appends 100 more commits per request.
@@ -45,10 +45,38 @@ syntax-highlighted diffs:
   Kotlin, SQL, Lua, YAML, TOML). Files with an unknown type stay plain text.
 - **Refresh** repository data manually, or click **Fetch all** to fetch from all
   configured remotes and then refresh the graph and branch list.
+- Working tree state is shown under the current branch: clean, number of
+  uncommitted entries, conflict count, and any merge, cherry-pick, revert, or
+  rebase left in progress.
+- The **Actions** menu checks out another local branch, pushes the current
+  branch to a configured remote, or pulls its upstream. The commit detail card
+  checks out a commit in detached HEAD, cherry-picks it, reverts it, or resets
+  the current branch to it with soft, mixed, or hard mode.
+- Every write action asks for confirmation. A dirty-tree checkout, a detached
+  checkout, and a hard reset use a destructive confirmation; a hard reset also
+  states the branch, target commit, and that uncommitted changes are discarded.
+  Push lets the user choose a remote when several are configured.
+- After an action, the graph, branches, tags, status, and remotes refresh. On
+  failure the Git error is shown and the status refreshes too, so conflicts and
+  in-progress operations are visible immediately.
+- When a cherry-pick or revert stops on a conflict, the panel offers **Continue**
+  and **Abort**. Continue finishes the operation once every conflict is resolved
+  and staged; Abort is destructive and discards the partial result. Merge and
+  rebase recovery are not offered because the panel never starts those
+  operations.
+- The changed-files header toggles between **Per-file view** and **Full patch**.
+  Full patch shows every file of the commit in one diff; clicking a file returns
+  to that file's view. Patches are capped at 256 KiB and marked truncated beyond
+  that.
+- The panel is a regular closable side tab. Open it from the side panel `+` menu
+  or the command palette; closing it removes it from the strip, and it can be
+  restored from the host's recently-closed list.
 
-Git inspection is read-only. The explicit **Fetch all** action contacts configured
-remotes and updates remote-tracking refs, but does not prune refs or change the
-checked-out branch or working tree. No destructive Git commands are exposed.
+History inspection is read-only. Write actions run only after an explicit user
+request, never in the background. Checkout warns first when the working tree is
+dirty and never forces over local changes. Fetch and pull update remote-tracking
+refs and the current branch; push updates the selected remote. None of them
+prunes refs.
 
 ## Documentation
 
@@ -67,7 +95,7 @@ checked-out branch or working tree. No destructive Git commands are exposed.
 | Side panel | `Panel` registry + `PanelTab` type |
 | Open the panel | `MenuItem` (`session.panel`) and `Command` |
 | Read the session | `ctx.sessions.current()` |
-| Open / inspect panel state | `ctx.layout.open()` / `ctx.layout.state()` |
+| Open / close a tab | `ctx.layout.open()` / `ctx.layout.state()`, `Panel.list({ open })`, `PanelTab.closable`, `Panel.closed` |
 | Component context | `usePlugin()` |
 | Native components | `ctx.ui.Icon`, `ctx.ui.Button` |
 | Translations | `ctx.t()` + `i18n` in `Plugin.define` |
@@ -78,7 +106,17 @@ checked-out branch or working tree. No destructive Git commands are exposed.
 | Tags / HEAD | `git for-each-ref refs/tags` and `git rev-parse HEAD` through typed RPC |
 | Search / branch filter | `git log --grep` and a validated local or remote ref |
 | Fetch all remotes | `git fetch --all` through typed `fetchAll` RPC, only on button click |
+| Working tree status | `git status --porcelain=v1 -z` through the `status` RPC |
+| Remotes | `git remote` through the `remotes` RPC |
+| Checkout | `git checkout <branch>` or `git checkout --detach <hash>` through typed RPC |
+| Cherry-pick / revert | `git cherry-pick <hash>` and `git revert --no-edit <hash>` |
+| Conflict recovery | `git cherry-pick\|revert --abort` and `--continue --no-edit` through typed RPC |
+| Reset | `git reset --soft`, `--mixed`, or `--hard` with a validated mode |
+| Push / pull | `git push <remote> refs/heads/<branch>:refs/heads/<branch>` and `git pull --ff-only` |
+| Action confirmations | `ctx.dialogs.confirm`, `ctx.dialogs.select`, and `ctx.dialogs.alert` |
+| Actions menu | `ctx.ui.Menu` with `UiMenuEntry` items |
 | Commit files | `git diff-tree` name-status and numstat against the first parent, with rename detection |
+| Commit patch | `git diff` against the first parent, or `git show --format=` for a root commit |
 | File diff | `git diff` against the first parent, or `git show` for root commits, rendered as a syntax-highlighted unified patch |
 | Graph | Pure lane-layout algorithm in `src/graph/layout.ts`, rendered as SVG |
 
@@ -171,10 +209,12 @@ is already checked once by its pull request. The workflow uses Node.js 22.12 and
    /Applications/OpenCode.app/Contents/Resources/opencode-cli plugin list
    ```
 
-3. Reload the OpenCode configuration, then open a session. The `Git Graph` tab
-   is pinned in the side panel. It is also available from:
+3. Reload the OpenCode configuration, then open a session. Open the `Git Graph`
+   tab from:
    - the side panel `+` menu;
    - the command palette (`Git Graph: Open panel`, `mod+shift+g`).
+
+   The tab is closable and is restored with the session when it was left open.
 
 ## Known integration limitations
 
@@ -184,10 +224,10 @@ is already checked once by its pull request. The workflow uses Node.js 22.12 and
   not sufficient.
 - If the server plugin fails to load, its GUI is unavailable.
 - The `opencode` namespace and built-in plugin ids are reserved.
-- Window `setup` is synchronous; asynchronous work belongs in a component,
+- Window `setup` is synchronous; asynchronous work belongs to a component,
   `createKeyed`, or `createLatest`.
-- The tab remains `pinned` to ensure visibility during this phase. It is planned
-  to become a closable tab opened from a launcher in a later GUI phase.
+- The tab is listed only while the session stores it open. If a session never
+  opened it, use the side panel `+` menu or the command palette.
 
 ## Git command security and limits
 
@@ -208,8 +248,8 @@ is already checked once by its pull request. The workflow uses Node.js 22.12 and
   rejected instead of being treated as a revision expression.
 - Each commit file request returns at most 500 files; the RPC response includes
   a `truncated` flag when the commit has more.
-- Each file diff is capped at 256 KiB; the RPC response includes a `truncated`
-  flag when the patch is larger.
+- Each file diff and the whole-commit patch are capped at 256 KiB; the RPC
+  response includes a `truncated` flag when the patch is larger.
 - Diff highlighting uses a small built-in tokenizer, not a parser: it colors
   comments, strings, numbers, keywords, types, and function calls per line.
   Unknown file types, Markdown, and binary files stay uncolored, and a block
@@ -219,8 +259,30 @@ is already checked once by its pull request. The workflow uses Node.js 22.12 and
 - Commits are read from all visible refs (`git log --all`), so remote branches
   must already have been fetched locally. Use **Fetch all** to update configured
   remotes.
-- Fetch does not prune stale refs. Checkout, reset, cherry-pick, push, pull, and
-  deletion remain out of scope.
+- Fetch does not prune stale refs.
+- Write actions accept only validated inputs: a local branch name that resolves
+  to `refs/heads/<name>`, a full commit hash, a configured remote name, and one
+  of the three reset modes. Revision expressions and option-like values are
+  rejected before Git runs.
+- Checkout never forces over local changes. Git refuses an overwrite and its
+  error is shown; the panel warns first when the working tree is dirty.
+- Cherry-pick and revert stop on conflict, leaving the operation in progress.
+  The status RPC reports the conflict count and the in-progress operation
+  instead of hiding the failure. The panel offers **Continue** (after conflicts
+  are resolved and staged) and a destructive **Abort** for those two operations.
+  Merge and rebase recovery are not exposed.
+- Push and pull contact the network only after an explicit user request and use
+  the same 120-second timeout as fetch. Pull is fast-forward only and fails on a
+  diverged branch. Push never forces.
+- Every write action confirms before running. Reset hard requires choosing the
+  mode and then confirming a warning that uncommitted changes are discarded.
+  Checkout of a commit confirms the detached HEAD state. These dialogs use the
+  app's own confirmation and select components.
+- Branch deletion, tag management, merge, rebase, stash, and remote
+  configuration remain out of scope.
+- An empty repository shows the empty state; the panel does not create an
+  initial commit. A commit reachable only from a tag stays visible because
+  history is read from every ref.
 
 ## Project structure
 
@@ -230,9 +292,11 @@ docs/
 └── changelog.md       # phase history and remaining scope
 src/
 ├── index.ts          # server plugin: RPC registration
-├── rpc.ts            # typed RPC contract (ping, history, branches)
+├── rpc.ts            # typed RPC contract (history, files, status, actions)
 ├── git/
-│   └── reader.ts     # Git commands, history reading, and parsing
+│   ├── exec.ts       # safe Git runner and input validation
+│   ├── reader.ts     # Git commands, history reading, and parsing
+│   └── actions.ts    # status, checkout, cherry-pick, revert, reset, push, pull, recovery
 ├── graph/
 │   ├── layout.ts     # graph lane and edge layout
 │   └── render.ts     # SVG edge paths and merge arrow direction
@@ -249,6 +313,7 @@ src/
 └── tests/
     ├── branches.test.ts
     ├── colors.test.ts
+    ├── git-actions.test.ts
     ├── git-reader.test.ts
     ├── graph-layout.test.ts
     ├── graph-render.test.ts

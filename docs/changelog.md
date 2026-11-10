@@ -349,6 +349,186 @@ highlighting dependency.
 - The suite now has 45 tests and `npm run check` passes.
 - README status, API table, limits, and project structure updated.
 
+## Git actions — server and RPC — 2026-11-09
+
+Goal: expose the write actions from the brief without letting the GUI build Git
+commands.
+
+### Shared executor
+
+- The safe Git runner moved out of `reader.ts` into `src/git/exec.ts`, together
+  with repository path validation, branch-name validation, and full-hash
+  validation. The reader and the new action layer now share one executor.
+- `runGit` still uses `spawn("git", args)` with `shell: false`, a fixed
+  argument list, a 10-second default timeout, and a 4 MiB stdout cap. Network
+  actions use a 120-second timeout.
+
+### Action layer
+
+- New `src/git/actions.ts` with `readStatus`, `readRemotes`, `checkoutBranch`,
+  `checkoutCommit`, `cherryPick`, `revert`, `reset`, `push`, and `pull`.
+- `readStatus` parses `git status --porcelain=v1 -z`, counting staged,
+  unstaged, untracked, and conflicted entries. It also reports the current
+  branch and `HEAD`, plus any merge, cherry-pick, revert, or rebase left in
+  progress after a conflict.
+- `checkoutBranch` accepts only a validated name that resolves to
+  `refs/heads/<name>`; remote names and revision expressions are refused.
+  `checkoutCommit` uses `--detach` with a full commit hash.
+- `cherryPick` and `revert --no-edit` accept a full commit hash only.
+- `reset` accepts exactly `soft`, `mixed`, or `hard`; any other value is
+  rejected before Git runs.
+- `push` validates the remote against the repository's configured remotes and
+  pushes an explicit `refs/heads/<branch>:refs/heads/<branch>` refspec, so the
+  GUI cannot inject an option or a refspec.
+- `pull` is `git pull --ff-only`, so it never creates a merge commit; a
+  diverged branch fails with Git's error.
+- A checkout that would overwrite local changes is not forced: Git refuses it,
+  and the error is returned to the GUI.
+- New typed RPC methods: `status`, `remotes`, `checkoutBranch`,
+  `checkoutCommit`, `cherryPick`, `revert`, `reset`, `push`, and `pull`.
+
+### Tests
+
+- Unit tests cover status parsing, including renames and conflicts.
+- Integration tests cover checkout of a branch and a commit, dirty-tree
+  checkout refusal, cherry-pick, a cherry-pick conflict reported through
+  `status`, revert, the three reset modes, push to a local bare remote, a
+  fast-forward pull, and rejection of unknown remotes, branches, hashes, and
+  reset modes.
+- The suite now has 55 tests and `npm run check` passes.
+
+## Git actions — panel controls and confirmations — 2026-11-09
+
+Goal: make the new server actions usable from the panel, with the confirmation
+rules from the brief.
+
+### Working tree status
+
+- The panel now shows whether the working tree is clean, how many entries are
+  uncommitted, how many are conflicted, and whether a merge, cherry-pick,
+  revert, or rebase is still in progress. The line turns red for conflicts and
+  amber for an in-progress operation.
+- Status and the configured remote list are fetched with the history, branches,
+  and tags on every refresh.
+
+### Actions menu
+
+- New **Actions** menu in the header with **Push**, **Pull**, and
+  **Checkout branch…**.
+- **Checkout branch…** uses the app's searchable select dialog, lists only local
+  branches other than the current one, then asks for confirmation. When the
+  working tree is dirty, the confirmation explains the risk and uses the
+  destructive style.
+- **Push** refuses to run in detached HEAD state or without a configured
+  remote, lets the user pick a remote when there is more than one, and shows the
+  branch and remote in the confirmation.
+- **Pull** asks for confirmation and states that it is fast-forward only.
+
+### Commit actions
+
+- The commit detail card adds **Checkout commit**, **Cherry-pick**, **Revert**,
+  and **Reset** buttons.
+- **Checkout commit** warns that it detaches HEAD.
+- **Cherry-pick** and **Revert** show the commit subject in their confirmation.
+- **Reset** first asks for the mode (soft, mixed, hard) in a select dialog with
+  the effect of each mode, then asks for confirmation showing the current
+  branch, the target commit, and its subject. **Hard** uses a destructive
+  confirmation and a stronger warning that uncommitted changes are discarded.
+- Every action shows a busy state on its button, disables the other action
+  controls while it runs, reports Git errors instead of hiding them, and
+  refreshes history, branches, tags, status, and remotes on success.
+- On failure the panel refreshes the status too, so a cherry-pick or revert
+  conflict appears immediately with its conflict count and in-progress marker.
+
+### Documentation
+
+- README now documents the action controls, their confirmations, and the
+  remaining write limitations.
+
+## Closable panel tab — 2026-11-09
+
+Goal: stop pinning the tab and let the user open and close it like any other
+side panel tab.
+
+- The `PanelTab` is no longer `pinned` and is no longer `closable: false`. It
+  now uses the compact close button.
+- `Panel.list` receives the session's stored tab ids and returns the Git Graph
+  tab only while `git-graph:graph` is stored open. A closed tab therefore leaves
+  the strip instead of being re-added on every render.
+- The side panel `+` menu item and the command palette command
+  (`Git Graph: Open panel`, `mod+shift+g`) remain the launcher: both call
+  `ctx.layout.open`, which stores the tab and selects it.
+- `Panel.closed` returns the tab title so the host can offer it under
+  "Recently closed" and reopen it under the same key.
+- `fallback: true` is kept so the tab is selected when it is opened.
+- The narrow-screen `mobile` menu entry is unchanged.
+
+## Conflict recovery — 2026-11-10
+
+Goal: let the user finish or cancel a cherry-pick or revert that stopped on a
+conflict, without leaving the app.
+
+- New `controlOperation` server action and `controlOperation` RPC method take a
+  directory, an operation (`cherry-pick` or `revert`), and an action (`abort` or
+  `continue`). Both values are validated before Git runs.
+- `merge` and `rebase` are refused on purpose: this plugin never starts them, so
+  it does not own their recovery.
+- Continue runs `git cherry-pick --continue --no-edit` or
+  `git revert --continue --no-edit`, so a GUI-spawned process never blocks on an
+  editor. Abort runs the matching `--abort`.
+- The panel shows **Continue** and **Abort** buttons beside the in-progress
+  marker, only for the two supported operations. Continue explains that every
+  conflict must be resolved and staged first. Abort is destructive and its
+  confirmation states that the partial result is discarded.
+- After either action, the panel refreshes history, branches, tags, status, and
+  remotes, so the marker disappears and conflicts clear.
+- New integration tests cover aborting and continuing a conflicted cherry-pick
+  and revert, plus rejection of unsupported operations and actions. The suite
+  now has 59 tests.
+
+## Integration coverage for edge cases — 2026-11-10
+
+Goal: lock the reader's behaviour on the repository shapes the brief calls out,
+and prove that bad input fails instead of returning partial data.
+
+- **Empty repository**: `readHistory` returns the repository root with no
+  commits, `readBranches` reports the unborn branch with no `HEAD`, and
+  `readTags` returns an empty list. The panel therefore shows its empty state
+  instead of an error.
+- **Multi-parent merge**: an octopus merge keeps all three parents in the
+  history record, and its file list is still compared against the first parent,
+  as documented.
+- **Commit reachable only from a tag**: after its branch is deleted, the commit
+  stays in the `--all` history, its tag is listed, and its files remain
+  readable.
+- **Large history**: a 320-commit repository is imported with `git fast-import`;
+  the first page returns 300 commits, the second returns the remaining 20, and
+  an oversized limit is clamped to 300.
+- **Failures**: a non-repository directory, a missing directory, a relative
+  path, an oversized query, a query with a newline, an option-like branch name,
+  an abbreviated commit hash, and a NUL path all reject with an error.
+- The suite now has 64 tests and `npm run check` passes.
+
+## Whole-commit patch view — 2026-11-10
+
+Goal: read every change of a commit in one diff instead of opening files one at
+a time.
+
+- New `readCommitPatch` server function and `commitPatch` RPC method. It diffs
+  the commit against its first parent, or uses `git show --format=` for a root
+  commit, and applies the same 256 KiB cap and truncation flag as the per-file
+  diff.
+- The changed-files header now has a **Full patch** / **Per-file view** toggle.
+  Full patch renders every file of the commit in the existing highlighted diff
+  viewer; clicking a file switches back to the per-file view for that file.
+- The shared diff viewer was extracted into one component, so both views use the
+  same loading, error, binary, empty, and truncation states.
+- A binary file inside the whole patch does not hide the rest: the patch text
+  keeps Git's `Binary files … differ` lines, while the per-file view still shows
+  its binary notice.
+- A new integration test covers a root commit patch and a two-file patch, plus
+  rejection of an abbreviated hash. The suite now has 65 tests.
+
 ## Current status against the original brief
 
 | Original feature | Status |
@@ -359,18 +539,17 @@ highlighting dependency.
 | Current branch / HEAD indicator | Done: current branch, HEAD commit badge, detached HEAD short hash |
 | Merge and parent-child relationships | Done |
 | Tags | Done: badges on commits, annotated tags peeled to their commit |
-| Commit selection details | Partial: metadata, tags, containing branches, changed files and stats; full patch not yet |
+| Commit selection details | Done: metadata, tags, containing branches, changed files and stats, per-file diffs, and a whole-commit patch view |
 | File diffs with syntax highlighting | Done: unified diff viewer with line colors and per-line syntax highlighting for common languages |
 | Search by message or hash | Done: full history, server-side, combines with branch filter |
 | Filter by branch | Done: local and remote branches |
-| Git actions (checkout, cherry-pick, revert, reset, push, fetch, pull) | Partial: explicit Fetch all updates configured remotes; other actions not yet |
-| Confirmation flows for destructive actions | Not yet |
-| Closable tab and launcher | Not yet; tab is pinned |
+| Git actions (checkout, cherry-pick, revert, reset, push, fetch, pull) | Done: branch and commit checkout, cherry-pick, revert, soft/mixed/hard reset, push to a configured remote, fetch, and fast-forward pull |
+| Confirmation flows for destructive actions | Done: every write action confirms; dirty checkout and detached checkout use a destructive confirmation; reset hard adds a select step and a stronger warning |
+| Conflict recovery | Done: continue or abort a cherry-pick or revert left in progress; merge and rebase recovery are not offered |
+| Closable tab and launcher | Done: closable tab opened from the side panel menu or the command palette, with a compact close button and a recently-closed entry |
 
 ## Next steps
 
-1. Action layer with explicit confirmation for destructive operations.
-2. Closable tab driven by a launcher.
-3. Error and conflict handling hardening.
-4. Remaining integration tests for empty repositories, tags, conflicts, local
-   changes, and command failures.
+1. Page or lazy-load very large patches instead of truncating them at 256 KiB.
+2. Branch deletion, tag management, merge, rebase, stash, and remote
+   configuration remain out of scope and are documented as such.

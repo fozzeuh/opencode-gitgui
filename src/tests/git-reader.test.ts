@@ -15,6 +15,7 @@ import {
   readBranchesContaining,
   readCommitFileDiff,
   readCommitFiles,
+  readCommitPatch,
   readHistory,
   readTags,
 } from "../git/reader"
@@ -399,6 +400,52 @@ describe("Git reader integration", () => {
     }
   })
 
+  it("reads the whole patch of a commit, including a root commit", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "git-graph-patch-"))
+    const git = (args: string[]) =>
+      execFileSync("git", args, {
+        cwd: directory,
+        stdio: "ignore",
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: "Git Graph Test",
+          GIT_AUTHOR_EMAIL: "git-graph@example.invalid",
+          GIT_COMMITTER_NAME: "Git Graph Test",
+          GIT_COMMITTER_EMAIL: "git-graph@example.invalid",
+        },
+      })
+    const head = () =>
+      execFileSync("git", ["rev-parse", "HEAD"], { cwd: directory, encoding: "utf8" }).trim()
+
+    try {
+      git(["init", "-b", "main"])
+      writeFileSync(join(directory, "a.txt"), "first a\n")
+      writeFileSync(join(directory, "b.txt"), "first b\n")
+      git(["add", "a.txt", "b.txt"])
+      git(["commit", "-m", "Base commit"])
+      const rootHash = head()
+
+      const rootPatch = await readCommitPatch(directory, rootHash)
+      expect(rootPatch.binary).toBe(false)
+      expect(rootPatch.truncated).toBe(false)
+      expect(rootPatch.patch).toContain("diff --git a/a.txt b/a.txt")
+      expect(rootPatch.patch).toContain("diff --git a/b.txt b/b.txt")
+
+      writeFileSync(join(directory, "a.txt"), "second a\n")
+      writeFileSync(join(directory, "b.txt"), "second b\n")
+      git(["commit", "-am", "Change both"])
+
+      const patch = await readCommitPatch(directory, head())
+      expect(patch.patch).toContain("diff --git a/a.txt b/a.txt")
+      expect(patch.patch).toContain("diff --git a/b.txt b/b.txt")
+      expect(patch.patch).toContain("+second a")
+      expect(patch.patch).toContain("+second b")
+      await expect(readCommitPatch(directory, "HEAD")).rejects.toThrow("hash is invalid")
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   it("reads diffs for renamed and binary files", async () => {
     const directory = mkdtempSync(join(tmpdir(), "git-graph-diff-"))
     const git = (args: string[]) =>
@@ -438,6 +485,213 @@ describe("Git reader integration", () => {
       expect(binaryDiff.patch).toContain("Binary files")
     } finally {
       rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("reads an empty repository without failing", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "git-graph-empty-history-"))
+    const git = (args: string[]) =>
+      execFileSync("git", args, {
+        cwd: directory,
+        stdio: "ignore",
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: "Git Graph Test",
+          GIT_AUTHOR_EMAIL: "git-graph@example.invalid",
+          GIT_COMMITTER_NAME: "Git Graph Test",
+          GIT_COMMITTER_EMAIL: "git-graph@example.invalid",
+        },
+      })
+
+    try {
+      git(["init", "-b", "main"])
+
+      const history = await readHistory(directory, 300, 0)
+      const branches = await readBranches(directory)
+      const tags = await readTags(directory)
+
+      expect(history.root).toBe(realpathSync(directory))
+      expect(history.commits).toEqual([])
+      expect(branches).toEqual({ current: "main", head: null, branches: [] })
+      expect(tags.tags).toEqual([])
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("keeps every parent of a multi-parent merge", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "git-graph-octopus-"))
+    const git = (args: string[]) =>
+      execFileSync("git", args, {
+        cwd: directory,
+        stdio: "ignore",
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: "Git Graph Test",
+          GIT_AUTHOR_EMAIL: "git-graph@example.invalid",
+          GIT_COMMITTER_NAME: "Git Graph Test",
+          GIT_COMMITTER_EMAIL: "git-graph@example.invalid",
+        },
+      })
+
+    try {
+      git(["init", "-b", "main"])
+      writeFileSync(join(directory, "base.txt"), "base\n")
+      git(["add", "base.txt"])
+      git(["commit", "-m", "Base commit"])
+      git(["checkout", "-b", "one"])
+      writeFileSync(join(directory, "one.txt"), "one\n")
+      git(["add", "one.txt"])
+      git(["commit", "-m", "One commit"])
+      git(["checkout", "main"])
+      git(["checkout", "-b", "two"])
+      writeFileSync(join(directory, "two.txt"), "two\n")
+      git(["add", "two.txt"])
+      git(["commit", "-m", "Two commit"])
+      git(["checkout", "main"])
+      git(["merge", "--no-ff", "one", "two", "-m", "Octopus merge"])
+
+      const mergeHash = execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: directory,
+        encoding: "utf8",
+      }).trim()
+      const expectedParents = execFileSync("git", ["rev-list", "--parents", "-n", "1", mergeHash], {
+        cwd: directory,
+        encoding: "utf8",
+      })
+        .trim()
+        .split(" ")
+        .slice(1)
+
+      const history = await readHistory(directory, 300, 0)
+      const merge = history.commits.find((commit) => commit.hash === mergeHash)
+      const files = await readCommitFiles(directory, mergeHash)
+
+      expect(expectedParents).toHaveLength(3)
+      expect(merge?.parents).toEqual(expectedParents)
+      expect(history.commits.some((commit) => commit.subject === "Octopus merge")).toBe(true)
+      expect(files.files.map((file) => file.path).sort()).toEqual(["one.txt", "two.txt"])
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("keeps a commit reachable only from a tag after its branch is deleted", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "git-graph-tagged-"))
+    const git = (args: string[]) =>
+      execFileSync("git", args, {
+        cwd: directory,
+        stdio: "ignore",
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: "Git Graph Test",
+          GIT_AUTHOR_EMAIL: "git-graph@example.invalid",
+          GIT_COMMITTER_NAME: "Git Graph Test",
+          GIT_COMMITTER_EMAIL: "git-graph@example.invalid",
+        },
+      })
+
+    try {
+      git(["init", "-b", "main"])
+      writeFileSync(join(directory, "base.txt"), "base\n")
+      git(["add", "base.txt"])
+      git(["commit", "-m", "Base commit"])
+      git(["checkout", "-b", "temporary"])
+      writeFileSync(join(directory, "kept.txt"), "kept\n")
+      git(["add", "kept.txt"])
+      git(["commit", "-m", "Tagged commit"])
+      const taggedHash = execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: directory,
+        encoding: "utf8",
+      }).trim()
+      git(["tag", "keep", taggedHash])
+      git(["checkout", "main"])
+      git(["branch", "-D", "temporary"])
+
+      const history = await readHistory(directory, 300, 0)
+      const tags = await readTags(directory)
+      const files = await readCommitFiles(directory, taggedHash)
+
+      expect(history.commits.some((commit) => commit.hash === taggedHash)).toBe(true)
+      expect(tags.tags).toEqual([{ name: "keep", hash: taggedHash }])
+      expect(files.files.map((file) => file.path)).toEqual(["kept.txt"])
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("pages through a history larger than the page size", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "git-graph-large-"))
+    const total = 320
+    const records: string[] = []
+
+    for (let index = 1; index <= total; index += 1) {
+      const message = `Commit ${index}`
+      records.push(
+        [
+          "commit refs/heads/main",
+          `mark :${index}`,
+          `author Git Graph Test <git-graph@example.invalid> ${1_700_000_000 + index} +0000`,
+          `committer Git Graph Test <git-graph@example.invalid> ${1_700_000_000 + index} +0000`,
+          `data ${Buffer.byteLength(message)}`,
+          message,
+          ...(index > 1 ? [`from :${index - 1}`] : []),
+          "",
+        ].join("\n"),
+      )
+    }
+
+    try {
+      execFileSync("git", ["init", "-b", "main"], { cwd: directory, stdio: "ignore" })
+      execFileSync("git", ["fast-import", "--quiet"], {
+        cwd: directory,
+        input: records.join("\n"),
+        stdio: ["pipe", "ignore", "ignore"],
+      })
+
+      const first = await readHistory(directory, 300, 0)
+      const second = await readHistory(directory, 100, 300)
+      const clamped = await readHistory(directory, 10_000, 0)
+
+      expect(first.commits).toHaveLength(300)
+      expect(first.commits[0]?.subject).toBe(`Commit ${total}`)
+      expect(first.commits[299]?.subject).toBe(`Commit ${total - 299}`)
+      expect(second.commits).toHaveLength(total - 300)
+      expect(second.commits[0]?.subject).toBe(`Commit ${total - 300}`)
+      expect(clamped.commits).toHaveLength(300)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("reports invalid input and Git failures instead of returning data", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "git-graph-failures-"))
+    const missing = join(directory, "missing")
+    const notRepository = mkdtempSync(join(tmpdir(), "git-graph-not-a-repo-"))
+
+    try {
+      execFileSync("git", ["init", "-b", "main"], { cwd: directory, stdio: "ignore" })
+
+      await expect(readHistory(directory, 300, 0)).resolves.toMatchObject({ commits: [] })
+      await expect(readHistory(notRepository, 300, 0)).rejects.toThrow()
+      await expect(readHistory(missing, 300, 0)).rejects.toThrow()
+      await expect(readHistory("relative/path", 300, 0)).rejects.toThrow("absolute")
+      await expect(
+        readHistory(directory, 300, 0, undefined, { query: "x".repeat(501) }),
+      ).rejects.toThrow("too long")
+      await expect(
+        readHistory(directory, 300, 0, undefined, { query: "bad\nquery" }),
+      ).rejects.toThrow("invalid characters")
+      await expect(
+        readHistory(directory, 300, 0, undefined, { branch: "-dangerous" }),
+      ).rejects.toThrow("branch name")
+      await expect(readCommitFiles(directory, "HEAD~1")).rejects.toThrow("hash is invalid")
+      await expect(readCommitFileDiff(directory, "a".repeat(40), "bad\0path", null)).rejects.toThrow(
+        "file path",
+      )
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+      rmSync(notRepository, { recursive: true, force: true })
     }
   })
 })
