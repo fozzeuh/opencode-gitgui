@@ -579,6 +579,12 @@ byte-for-byte the same apart from the dependency range.
   added at that path when the final screenshot is ready.
 - No runtime behavior or package APIs changed.
 
+## Version 0.1.1 — 2026-11-10
+
+- Bumped the package version from `0.1.0` to `0.1.1` in the npm metadata,
+  lockfile, and plugin version reported through the `ping` RPC.
+- No user-facing behavior or API changed.
+
 ## Current status against the original brief
 
 | Original feature | Status |
