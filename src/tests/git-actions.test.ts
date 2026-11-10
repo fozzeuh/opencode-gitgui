@@ -35,6 +35,12 @@ function temporaryRepository(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix))
 }
 
+function initializeRepository(directory: string): void {
+  git(directory, ["init", "-b", "main"])
+  git(directory, ["config", "user.name", "Git Graph User"])
+  git(directory, ["config", "user.email", "git-graph-user@example.invalid"])
+}
+
 describe("Git status parsing", () => {
   it("counts staged, unstaged, untracked, and conflicted entries", () => {
     const output = [
@@ -70,7 +76,7 @@ describe("Git action integration", () => {
     const directory = temporaryRepository("git-graph-checkout-")
 
     try {
-      git(directory, ["init", "-b", "main"])
+      initializeRepository(directory)
       writeFileSync(join(directory, "sample.txt"), "first\n")
       git(directory, ["add", "sample.txt"])
       git(directory, ["commit", "-m", "Initial commit"])
@@ -112,7 +118,7 @@ describe("Git action integration", () => {
     const directory = temporaryRepository("git-graph-checkout-dirty-")
 
     try {
-      git(directory, ["init", "-b", "main"])
+      initializeRepository(directory)
       writeFileSync(join(directory, "sample.txt"), "first\n")
       git(directory, ["add", "sample.txt"])
       git(directory, ["commit", "-m", "Initial commit"])
@@ -134,7 +140,7 @@ describe("Git action integration", () => {
     const directory = temporaryRepository("git-graph-cherry-pick-")
 
     try {
-      git(directory, ["init", "-b", "main"])
+      initializeRepository(directory)
       writeFileSync(join(directory, "base.txt"), "base\n")
       git(directory, ["add", "base.txt"])
       git(directory, ["commit", "-m", "Base commit"])
@@ -159,7 +165,7 @@ describe("Git action integration", () => {
     const directory = temporaryRepository("git-graph-conflict-")
 
     try {
-      git(directory, ["init", "-b", "main"])
+      initializeRepository(directory)
       writeFileSync(join(directory, "base.txt"), "base\n")
       git(directory, ["add", "base.txt"])
       git(directory, ["commit", "-m", "Base commit"])
@@ -185,7 +191,7 @@ describe("Git action integration", () => {
     const directory = temporaryRepository("git-graph-abort-cherry-pick-")
 
     try {
-      git(directory, ["init", "-b", "main"])
+      initializeRepository(directory)
       writeFileSync(join(directory, "base.txt"), "base\n")
       git(directory, ["add", "base.txt"])
       git(directory, ["commit", "-m", "Base commit"])
@@ -217,7 +223,7 @@ describe("Git action integration", () => {
     const directory = temporaryRepository("git-graph-continue-cherry-pick-")
 
     try {
-      git(directory, ["init", "-b", "main"])
+      initializeRepository(directory)
       writeFileSync(join(directory, "base.txt"), "base\n")
       git(directory, ["add", "base.txt"])
       git(directory, ["commit", "-m", "Base commit"])
@@ -249,7 +255,7 @@ describe("Git action integration", () => {
     const directory = temporaryRepository("git-graph-revert-conflict-")
 
     try {
-      git(directory, ["init", "-b", "main"])
+      initializeRepository(directory)
       writeFileSync(join(directory, "base.txt"), "base\n")
       git(directory, ["add", "base.txt"])
       git(directory, ["commit", "-m", "Base commit"])
@@ -291,7 +297,7 @@ describe("Git action integration", () => {
     const directory = temporaryRepository("git-graph-control-validation-")
 
     try {
-      git(directory, ["init", "-b", "main"])
+      initializeRepository(directory)
       writeFileSync(join(directory, "sample.txt"), "first\n")
       git(directory, ["add", "sample.txt"])
       git(directory, ["commit", "-m", "Initial commit"])
@@ -312,7 +318,7 @@ describe("Git action integration", () => {
     const directory = temporaryRepository("git-graph-revert-")
 
     try {
-      git(directory, ["init", "-b", "main"])
+      initializeRepository(directory)
       writeFileSync(join(directory, "sample.txt"), "first\n")
       git(directory, ["add", "sample.txt"])
       git(directory, ["commit", "-m", "Initial commit"])
@@ -334,7 +340,7 @@ describe("Git action integration", () => {
     const directory = temporaryRepository("git-graph-reset-")
 
     try {
-      git(directory, ["init", "-b", "main"])
+      initializeRepository(directory)
       writeFileSync(join(directory, "sample.txt"), "first\n")
       git(directory, ["add", "sample.txt"])
       git(directory, ["commit", "-m", "Initial commit"])
@@ -370,7 +376,7 @@ describe("Git action integration", () => {
 
     try {
       git(root, ["init", "--bare", "-b", "main", remote])
-      git(source, ["init", "-b", "main"])
+      initializeRepository(source)
       writeFileSync(join(source, "sample.txt"), "first\n")
       git(source, ["add", "sample.txt"])
       git(source, ["commit", "-m", "Initial commit"])
@@ -403,7 +409,7 @@ describe("Git action integration", () => {
     const directory = temporaryRepository("git-graph-validation-")
 
     try {
-      git(directory, ["init", "-b", "main"])
+      initializeRepository(directory)
       writeFileSync(join(directory, "sample.txt"), "first\n")
       git(directory, ["add", "sample.txt"])
       git(directory, ["commit", "-m", "Initial commit"])

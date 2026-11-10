@@ -529,6 +529,13 @@ a time.
 - A new integration test covers a root commit patch and a two-file patch, plus
   rejection of an abbreviated hash. The suite now has 65 tests.
 
+## CI test identity — 2026-11-10
+
+- Git action integration tests now configure a deterministic author and
+  committer identity in each temporary repository. Operations such as revert
+  and cherry-pick continuation no longer depend on a runner's global Git
+  configuration, which was missing in GitHub Actions.
+
 ## Current status against the original brief
 
 | Original feature | Status |
