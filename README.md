@@ -135,7 +135,9 @@ prunes refs.
 
 ## Loading mechanism
 
-The package exposes three entry points:
+The package is published on npm as
+[`opencode-git-graph-gui`](https://www.npmjs.com/package/opencode-git-graph-gui)
+and exposes three entry points:
 
 ```json
 {
@@ -152,11 +154,20 @@ The package exposes three entry points:
 - `./gui-experimental`: prebuilt CommonJS bundle, loaded by Desktop.
 
 OpenCode Desktop loads GUI plugins from its background server, which reads the
-global `opencode.json(c)` configuration. A local plugin entry must be a
-**directory** containing a `package.json` with `name` and `exports`:
+global `opencode.json(c)` configuration. One entry loads every part, whether the
+plugin comes from npm or from a local directory:
 
 ```jsonc
 // ~/.config/opencode/opencode.jsonc
+{
+  "plugins": ["opencode-git-graph-gui"]
+}
+```
+
+A local plugin entry must be a **directory** containing a `package.json` with
+`name` and `exports`:
+
+```jsonc
 {
   "plugins": ["/Users/maximedeharbonnier/Projects/opencode-gitgui"]
 }
@@ -195,12 +206,18 @@ dispatch. Pushes to feature branches do not start a separate run: the same commi
 is already checked once by its pull request. The workflow uses Node.js 22.12 and
 `npm ci`; it covers typecheck, lint, tests, and the production build.
 
-## Local installation
+## Installation
 
-1. Build the GUI bundle:
+### From npm
 
-   ```bash
-   npm run build
+1. Add the plugin to the **global** OpenCode configuration. Desktop reads GUI
+   plugins only from `opencode.json(c)`, not from `cli.json`:
+
+   ```jsonc
+   // ~/.config/opencode/opencode.jsonc
+   {
+     "plugins": ["opencode-git-graph-gui"]
+   }
    ```
 
 2. Verify that OpenCode detects the plugin:
@@ -215,6 +232,69 @@ is already checked once by its pull request. The workflow uses Node.js 22.12 and
    - the command palette (`Git Graph: Open panel`, `mod+shift+g`).
 
    The tab is closable and is restored with the session when it was left open.
+
+Pin a version with `opencode-git-graph-gui@0.1.0` when you need a known-good
+release, and run `opencode plugin update` to replace an installed version.
+
+### From a local directory
+
+1. Build the GUI bundle. A published tarball always contains
+   `dist/gui-experimental.cjs` because `prepack` builds it, but a checkout does
+   not:
+
+   ```bash
+   npm run build
+   ```
+
+2. Point the global configuration at the directory instead of the package name:
+
+   ```jsonc
+   // ~/.config/opencode/opencode.jsonc
+   {
+     "plugins": ["/Users/maximedeharbonnier/Projects/opencode-gitgui"]
+   }
+   ```
+
+3. Verify the plugin is detected, then open the tab as above.
+
+## Publishing
+
+The package name is `opencode-git-graph-gui`; `opencode-git-graph` already
+belongs to another project on npm.
+
+1. Log in to npm once per machine:
+
+   ```bash
+   npm login
+   npm whoami
+   ```
+
+2. Check the package contents. `prepack` rebuilds `dist/` and
+   `prepublishOnly` runs the full check, so this also validates the build:
+
+   ```bash
+   npm pack --dry-run
+   ```
+
+   The tarball must contain `src/`, `dist/gui-experimental.cjs`, `README.md`, and
+   `LICENSE`. A tarball without the GUI bundle installs a plugin whose panel
+   never loads, which is why `dist/` stays out of Git and is built on publish.
+
+3. Publish:
+
+   ```bash
+   npm publish
+   ```
+
+   `npm publish` refuses a `private` package, so `private` must not be set.
+
+4. Bump `version` for every release. The GUI API is `-experimental` and may
+   change between OpenCode releases, so keep the plugin on `0.x` until the API
+   settles and publish a compatible update when adopting a newer contract.
+
+5. Test the published version, not only the local directory. A directory
+   rebuild reloads the GUI in every window, while an installed package changes
+   only with its version.
 
 ## Known integration limitations
 
